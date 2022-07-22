@@ -1,6 +1,6 @@
 [package]
 name = "av1-grain"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.59.0"
 license = "BSD-2-Clause"
@@ -8,7 +8,7 @@ description = "Helpers for generating and parsing AV1 film grain data"
 readme = "README.md"
 repository = "https://github.com/rust-av/av1-grain"
 homepage = "https://github.com/rust-av/av1-grain"
-documentation = "https://docs.rs/av1-gran"
+documentation = "https://docs.rs/av1-grain"
 
 [dependencies]
 anyhow = "1.0.58"
