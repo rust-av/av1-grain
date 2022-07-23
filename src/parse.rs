@@ -58,7 +58,7 @@ use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y
 ///
 /// - If the file cannot be opened
 /// - If the file does not contain a properly formatted film grain table
-pub fn parse_grain_table(input: &str) -> Result<Vec<GrainTableSegment>, String> {
+pub fn parse_grain_table(input: &str) -> anyhow::Result<Vec<GrainTableSegment>, String> {
     let (input, _) = grain_table_header(input).map_err(|e| e.to_string())?;
     let (_, segments) = many1(grain_table_segment)(input).map_err(|e| e.to_string())?;
     Ok(segments.into_iter().flatten().collect())
