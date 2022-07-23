@@ -337,7 +337,7 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
     let max_electrons_per_pixel = mid_tone_electrons_per_pixel / args.transfer_function.mid_tone();
 
     let mut scaling_points = ScalingPoints::default();
-    for (i, point) in scaling_points.iter_mut().enumerate() {
+    for i in 0..NUM_Y_POINTS {
         let x = i as f32 / (NUM_Y_POINTS as f32 - 1.);
         let linear = args.transfer_function.to_linear(x);
         let electrons_per_pixel = max_electrons_per_pixel * linear;
@@ -366,8 +366,7 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
         let x = (255. * x).round() as u8;
         let encoded_noise = 255_f32.min((255. * 7.88 * encoded_noise).round()) as u8;
 
-        point[0] = x;
-        point[1] = encoded_noise;
+        scaling_points.push([x, encoded_noise]);
     }
 
     scaling_points
