@@ -50,14 +50,24 @@
 
 #[cfg(feature = "create")]
 mod create;
+#[cfg(feature = "diff")]
+mod diff;
+#[cfg(all(feature = "estimate", feature = "unstable"))]
+mod estimate;
 #[cfg(feature = "parse")]
 mod parse;
+mod util;
 
 use arrayvec::ArrayVec;
 #[cfg(feature = "create")]
 pub use create::*;
+#[cfg(feature = "diff")]
+pub use diff::*;
+#[cfg(all(feature = "estimate", feature = "unstable"))]
+pub use estimate::*;
 #[cfg(feature = "parse")]
 pub use parse::*;
+pub use v_frame;
 
 /// The max number of luma scaling points for grain synthesis
 pub const NUM_Y_POINTS: usize = 14;
