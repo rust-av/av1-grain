@@ -127,10 +127,10 @@ pub struct NoiseGenArgs {
     pub random_seed: Option<u16>,
 }
 
-/// Generates a set of film grain parameters for a segment of video
+/// Generates a set of photon noise parameters for a segment of video
 /// given a set of `args`.
 #[must_use]
-pub fn generate_grain_params(
+pub fn generate_photon_noise_params(
     start_time: u64,
     end_time: u64,
     args: NoiseGenArgs,
@@ -160,6 +160,45 @@ pub fn generate_grain_params(
         grain_scale_shift: 0,
         random_seed: args.random_seed.unwrap_or(DEFAULT_GRAIN_SEED),
     }
+}
+
+/// Generates a set of film grain parameters for a segment of video
+/// given a set of `args`.
+///
+/// # Panics
+/// - This is not yet implemented, so it will always panic
+#[must_use]
+pub fn generate_film_grain_params(
+    start_time: u64,
+    end_time: u64,
+    args: NoiseGenArgs,
+) -> GrainTableSegment {
+    todo!("SCIENCE");
+    // GrainTableSegment {
+    //     start_time,
+    //     end_time,
+    //     scaling_points_y: generate_luma_noise_points(args),
+    //     scaling_points_cb: ArrayVec::new(),
+    //     scaling_points_cr: ArrayVec::new(),
+    //     scaling_shift: 8,
+    //     ar_coeff_lag: 0,
+    //     ar_coeffs_y: ArrayVec::new(),
+    //     ar_coeffs_cb: ArrayVec::try_from([0].as_slice())
+    //         .expect("Cannot fail creation from const array"),
+    //     ar_coeffs_cr: ArrayVec::try_from([0].as_slice())
+    //         .expect("Cannot fail creation from const array"),
+    //     ar_coeff_shift: 6,
+    //     cb_mult: 0,
+    //     cb_luma_mult: 0,
+    //     cb_offset: 0,
+    //     cr_mult: 0,
+    //     cr_luma_mult: 0,
+    //     cr_offset: 0,
+    //     overlap_flag: true,
+    //     chroma_scaling_from_luma: args.chroma_grain,
+    //     grain_scale_shift: 0,
+    //     random_seed: args.random_seed.unwrap_or(DEFAULT_GRAIN_SEED),
+    // }
 }
 
 /// Write a set of generated film grain params to a table file,
@@ -257,7 +296,6 @@ pub enum TransferFunction {
     SMPTE2084,
 }
 
-// TODO: This should probably be in a crate shared between rav1e and av1an
 impl TransferFunction {
     #[must_use]
     pub fn to_linear(self, x: f32) -> f32 {

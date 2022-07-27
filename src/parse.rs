@@ -660,8 +660,8 @@ E 0 9223372036854775807 1 7391 1
         grain_scale_shift: 0,
         random_seed: 7391,
     };
-    let output = parse_grain_table(input);
-    assert_eq!(Ok(vec![expected]), output);
+    let output = parse_grain_table(input).expect("Test failed");
+    assert_eq!(vec![expected], output);
 }
 
 #[test]
@@ -738,8 +738,8 @@ E 0 9223372036854775807 1 7391 1
         grain_scale_shift: 0,
         random_seed: 7391,
     };
-    let output = parse_grain_table(input);
-    assert_eq!(Ok(vec![expected]), output);
+    let output = parse_grain_table(input).expect("Test failed");
+    assert_eq!(vec![expected], output);
 }
 
 #[test]
