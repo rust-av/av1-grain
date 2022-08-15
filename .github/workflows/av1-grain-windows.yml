@@ -1,0 +1,204 @@
+# FIXME
+# - Code coverage on Windows does not work because there are problems
+#   with grcov paths
+# - valgrind cannot be installed on Windows, only on linux
+# - cargo-fuzz and AddressSanitizer are not supported on Windows
+
+name: av1-grain-windows
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  clippy-rustfmt:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install stable
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        components: clippy, rustfmt
+
+    - name: Run rustfmt
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: -- --check --verbose
+
+    - name: Run cargo clippy
+      uses: actions-rs/clippy-check@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        args: --all-targets --tests --benches -- -D warnings
+
+  build-test:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust stable
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Build
+      run: cargo build --verbose --tests --benches
+
+    - name: Run tests
+      run: cargo test --verbose
+
+    - name: Generate docs
+      run: cargo doc --no-deps
+
+  undefined-behaviour-dynamic-analysis:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache produced data
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-ci-${{ hashFiles('**/Cargo.toml') }}
+
+    - name: Install Rust nightly and miri
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: miri
+        override: true
+
+    # FIXME Use binaries
+    - name: Install cargo-fuzz
+      run: |
+        cargo install cargo-fuzz
+
+    - name: Run miri
+      env:
+        # -Zrandomize-layout makes sure not to rely on the layout of anything
+        # that might change
+        RUSTFLAGS: -Zrandomize-layout
+        # -Zmiri-check-number-validity enables checking of integer and float
+        # validity (e.g., they must be initialized and not carry
+        # pointer provenance) as part of enforcing validity invariants.
+        # -Zmiri-tag-raw-pointers enables a lot of extra UB checks relating
+        # to raw pointer aliasing rules.
+        # -Zmiri-symbolic-alignment-check makes the alignment check more strict.
+        MIRIFLAGS: >
+          -Zmiri-check-number-validity -Zmiri-tag-raw-pointers
+          -Zmiri-symbolic-alignment-check
+      run: cargo miri test
+
+  static-code-analysis:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install rust-code-analysis
+      env:
+        RCA_LINK: https://github.com/mozilla/rust-code-analysis/releases/download
+        RCA_VERSION: v0.0.23
+      run: |
+        mkdir -p $HOME/bin
+        curl -LO "$Env:RCA_LINK/$env:RCA_VERSION/rust-code-analysis-win-cli-x86_64.zip"
+        7z e -y "rust-code-analysis-win-cli-x86_64.zip" -o"$HOME/bin"
+        echo "$HOME/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Run rust-code-analysis
+      run: |
+        mkdir $HOME/rca-json
+        # FIXME: Update rca version to analyze the entire directory of a repo
+        rust-code-analysis-cli --metrics -O json --pr -o "$HOME/rca-json" -p src/
+
+    - name: Upload rust-code-analysis json
+      uses: actions/upload-artifact@v3
+      with:
+        name: rca-json-windows
+        path: ~/rca-json
+
+  weighted-code-coverage:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install stable
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Install grcov
+      env:
+        GRCOV_LINK: https://github.com/mozilla/grcov/releases/download
+        GRCOV_VERSION: v0.8.7
+        GRCOV_BINARY: grcov-x86_64-pc-windows-msvc.zip 
+      run: |
+        curl -LO "$Env:GRCOV_LINK/$Env:GRCOV_VERSION/$Env:GRCOV_BINARY"
+        7z e -y "$Env:GRCOV_BINARY" -o"${env:USERPROFILE}\.cargo\bin"
+
+    - name: Install weighted-code-coverage
+      env:
+        WCC_LINK: https://github.com/giovannitangredi/weighted-code-coverage/releases/download
+        WCC_VERSION: v0.1.0
+        WCC_BINARY: weighted-code-coverage-0.1.0-x86_64-pc-windows-msvc.zip
+      run: |
+        curl -LO "$Env:WCC_LINK/$Env:WCC_VERSION/$Env:WCC_BINARY"
+        7z e -y "$Env:WCC_BINARY" -o"${env:USERPROFILE}\.cargo\bin"
+
+    - name: Install llvm-tools-preview
+      run: |
+        rustup component add llvm-tools-preview
+
+    # Not necessary on a newly created image, but strictly advised
+    - name: Run cargo clean
+      run: |
+        cargo clean
+
+    - name: Run tests
+      env:
+        RUSTFLAGS: "-Cinstrument-coverage"
+        LLVM_PROFILE_FILE: "av1-grain-%p-%m.profraw"
+      run: |
+        cargo test --verbose
+
+    - name: Run grcov
+      run: |
+        grcov . --binary-path ./target/debug/ -t coveralls -s . --token YOUR_COVERALLS_TOKEN > coveralls.json
+
+    - name: Run weighted-code-coverage
+      run: |
+        mkdir $HOME/wcc-output
+        weighted-code-coverage -p src/ -j coveralls.json -c --json $HOME/wcc-output/out.json
+
+    - name: Upload weighted-code-coverage data
+      uses: actions/upload-artifact@v3
+      with:
+        name: weighted-code-coverage-windows
+        path: ~/wcc-output/out.json
