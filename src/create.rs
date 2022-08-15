@@ -168,6 +168,7 @@ pub fn generate_photon_noise_params(
 /// # Panics
 /// - This is not yet implemented, so it will always panic
 #[must_use]
+#[cfg(feature = "unstable")]
 pub fn generate_film_grain_params(
     start_time: u64,
     end_time: u64,
