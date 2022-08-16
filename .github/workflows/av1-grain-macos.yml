@@ -7,10 +7,10 @@ name: av1-grain-macos
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   clippy-rustfmt:
