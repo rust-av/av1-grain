@@ -21,13 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install stable
+      - name: Install nightly
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: nightly
           override: true
-          components: clippy, rustfmt
+          components: rustfmt, clippy
 
       - name: Run rustfmt
         uses: actions-rs/cargo@v1
