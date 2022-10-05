@@ -921,7 +921,7 @@ impl NoiseModelState {
         // in the diagonal. So use the mean of the diagonal as the estimate of
         // overall variance (this works for least squares or Yule-Walker formulation).
         let mut var = 0f64;
-        let n_adjusted = self.eqns.n - if is_chroma { 1 } else { 0 };
+        let n_adjusted = self.eqns.n - usize::from(is_chroma);
         for i in 0..n_adjusted {
             var += self.eqns.a[i * self.eqns.n + i] / self.num_observations as f64;
         }
