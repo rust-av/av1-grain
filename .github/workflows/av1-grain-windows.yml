@@ -63,51 +63,6 @@ jobs:
       - name: Generate docs
         run: cargo doc --no-deps
 
-  undefined-behaviour-dynamic-analysis:
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Cache produced data
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('**/Cargo.toml') }}
-
-      - name: Install Rust nightly and miri
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          components: miri
-          override: true
-
-      # FIXME Use binaries
-      - name: Install cargo-fuzz
-        run: |
-          cargo install cargo-fuzz
-
-      - name: Run miri
-        env:
-          # -Zrandomize-layout makes sure not to rely on the layout of anything
-          # that might change
-          RUSTFLAGS: -Zrandomize-layout
-          # -Zmiri-check-number-validity enables checking of integer and float
-          # validity (e.g., they must be initialized and not carry
-          # pointer provenance) as part of enforcing validity invariants.
-          # -Zmiri-tag-raw-pointers enables a lot of extra UB checks relating
-          # to raw pointer aliasing rules.
-          # -Zmiri-symbolic-alignment-check makes the alignment check more strict.
-          MIRIFLAGS: >
-            -Zmiri-check-number-validity -Zmiri-tag-raw-pointers
-            -Zmiri-symbolic-alignment-check
-        run: cargo miri test
-
   static-code-analysis:
     runs-on: windows-latest
 
