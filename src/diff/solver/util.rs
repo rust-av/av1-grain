@@ -109,16 +109,27 @@ pub(super) fn extract_ar_row(
     let source_data = source.data_origin();
     let denoised_data = denoised.data_origin();
     let stride = source.cfg.stride;
-    for i in 0..num_coords {
-        let x_i = x as isize + coords[i][0];
-        let y_i = y as isize + coords[i][1];
+    for (coords, out) in coords[..num_coords]
+        .iter()
+        .zip(buffer[..num_coords].iter_mut())
+    {
+        let x_i = x as isize + coords[0];
+        let y_i = y as isize + coords[1];
         debug_assert!(x_i >= 0);
         debug_assert!(y_i >= 0);
-        buffer[i] = f64::from(source_data[y_i as usize * stride + x_i as usize])
-            - f64::from(denoised_data[y_i as usize * stride + x_i as usize]);
+        // SAFETY: We control the coordinates being passed in, because this is not a
+        // public fn, so we know that the coordinates will always be in range
+        *out = unsafe {
+            f64::from(*source_data.get_unchecked(y_i as usize * stride + x_i as usize))
+                - f64::from(*denoised_data.get_unchecked(y_i as usize * stride + x_i as usize))
+        };
     }
-    let val = f64::from(source.data_origin()[y * stride + x])
-        - f64::from(denoised.data_origin()[y * stride + x]);
+    // SAFETY: We know that x and y coords are in bounds because we control the
+    // inputs
+    let val = unsafe {
+        f64::from(*source_data.get_unchecked(y * stride + x))
+            - f64::from(*denoised_data.get_unchecked(y * stride + x))
+    };
 
     if let Some(alt_source) = alt_source {
         if let Some(alt_denoised) = alt_denoised {
@@ -133,8 +144,14 @@ pub(super) fn extract_ar_row(
                 let y_up = (y << source.cfg.ydec) + dy_i;
                 for dx_i in 0..(1 << source.cfg.xdec) {
                     let x_up = (x << source.cfg.xdec) + dx_i;
-                    source_sum += u64::from(alt_source_data[y_up * alt_stride + x_up]);
-                    denoised_sum += u64::from(alt_denoised_data[y_up * alt_stride + x_up]);
+                    // SAFETY: We control the coordinates being passed in, so we know that the
+                    // coordinates will always be in range
+                    unsafe {
+                        source_sum +=
+                            u64::from(*alt_source_data.get_unchecked(y_up * alt_stride + x_up));
+                        denoised_sum +=
+                            u64::from(*alt_denoised_data.get_unchecked(y_up * alt_stride + x_up));
+                    }
                     num_samples += 1;
                 }
             }
