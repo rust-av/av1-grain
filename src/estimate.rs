@@ -31,6 +31,7 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
     let width = plane.cfg.width;
     let height = plane.cfg.height;
     let stride = plane.cfg.stride;
+    let data_origin = plane.data_origin();
 
     let mut accum = 0u64;
     let mut count = 0u64;
@@ -43,9 +44,9 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
                 for jj in -1isize..=1isize {
                     let idx = (center_idx + ii * stride as isize + jj) as usize;
                     mat[(ii + 1) as usize][(jj + 1) as usize] = if size_of::<T>() == 1 {
-                        i16::cast_from(plane.data_origin()[idx])
+                        i16::cast_from(data_origin[idx])
                     } else {
-                        (u16::cast_from(plane.data_origin()[idx]) >> (bit_depth - 8usize)) as i16
+                        (u16::cast_from(data_origin[idx]) >> (bit_depth - 8usize)) as i16
                     };
                 }
             }

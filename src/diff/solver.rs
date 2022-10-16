@@ -200,13 +200,14 @@ impl FlatBlockFinder {
     ) {
         let mut plane_coords = [0f64; LOW_POLY_NUM_PARAMS];
         let mut a_t_a_inv_b = [0f64; LOW_POLY_NUM_PARAMS];
+        let data_origin = plane.data_origin();
 
         for yi in 0..BLOCK_SIZE {
             let y = clamp(offset_y + yi, 0, plane.cfg.height - 1);
             for xi in 0..BLOCK_SIZE {
                 let x = clamp(offset_x + xi, 0, plane.cfg.width - 1);
                 block_result[yi * BLOCK_SIZE + xi] =
-                    f64::from(plane.data_origin()[y * plane.cfg.stride + x]) / BLOCK_NORMALIZATION;
+                    f64::from(data_origin[y * plane.cfg.stride + x]) / BLOCK_NORMALIZATION;
             }
         }
 

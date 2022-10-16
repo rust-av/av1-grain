@@ -106,20 +106,25 @@ pub(super) fn extract_ar_row(
     y: usize,
     buffer: &mut [f64],
 ) -> f64 {
+    let source_data = source.data_origin();
+    let denoised_data = denoised.data_origin();
     let stride = source.cfg.stride;
     for i in 0..num_coords {
         let x_i = x as isize + coords[i][0];
         let y_i = y as isize + coords[i][1];
         debug_assert!(x_i >= 0);
         debug_assert!(y_i >= 0);
-        buffer[i] = f64::from(source.data_origin()[y_i as usize * stride + x_i as usize])
-            - f64::from(denoised.data_origin()[y_i as usize * stride + x_i as usize]);
+        buffer[i] = f64::from(source_data[y_i as usize * stride + x_i as usize])
+            - f64::from(denoised_data[y_i as usize * stride + x_i as usize]);
     }
     let val = f64::from(source.data_origin()[y * stride + x])
         - f64::from(denoised.data_origin()[y * stride + x]);
 
     if let Some(alt_source) = alt_source {
         if let Some(alt_denoised) = alt_denoised {
+            let alt_source_data = alt_source.data_origin();
+            let alt_denoised_data = alt_denoised.data_origin();
+
             let alt_stride = alt_source.cfg.stride;
             let mut source_sum = 0u64;
             let mut denoised_sum = 0u64;
@@ -128,8 +133,8 @@ pub(super) fn extract_ar_row(
                 let y_up = (y << source.cfg.ydec) + dy_i;
                 for dx_i in 0..(1 << source.cfg.xdec) {
                     let x_up = (x << source.cfg.xdec) + dx_i;
-                    source_sum += u64::from(alt_source.data_origin()[y_up * alt_stride + x_up]);
-                    denoised_sum += u64::from(alt_denoised.data_origin()[y_up * alt_stride + x_up]);
+                    source_sum += u64::from(alt_source_data[y_up * alt_stride + x_up]);
+                    denoised_sum += u64::from(alt_denoised_data[y_up * alt_stride + x_up]);
                     num_samples += 1;
                 }
             }
@@ -149,12 +154,16 @@ pub(super) fn get_block_mean(
 ) -> f64 {
     let max_h = (frame_dims.1 - y_o).min(BLOCK_SIZE);
     let max_w = (frame_dims.0 - x_o).min(BLOCK_SIZE);
+    let data = source.data_origin();
+    assert!(data.len() >= (y_o + max_h - 1) * source.cfg.stride + x_o + max_w - 1);
 
     let mut block_sum = 0u64;
     for y in 0..max_h {
         for x in 0..max_w {
             let index = (y_o + y) * source.cfg.stride + x_o + x;
-            block_sum += u64::from(source.data_origin()[index]);
+            // SAFETY: We bounds check once before entering the loop
+            // to improve vectorization
+            block_sum += unsafe { u64::from(*data.get_unchecked(index)) };
         }
     }
 
@@ -174,13 +183,15 @@ pub(super) fn get_noise_var(
     let max_h = (frame_dims.1 - y_o).min(block_h);
     let max_w = (frame_dims.0 - x_o).min(block_w);
 
+    let source_data = source.data_origin();
+    let denoised_data = denoised.data_origin();
+
     let mut noise_var_sum = 0u64;
     let mut noise_sum = 0i64;
     for y in 0..max_h {
         for x in 0..max_w {
             let index = (y_o + y) * source.cfg.stride + x_o + x;
-            let noise =
-                i64::from(source.data_origin()[index]) - i64::from(denoised.data_origin()[index]);
+            let noise = i64::from(source_data[index]) - i64::from(denoised_data[index]);
             noise_sum += noise;
             noise_var_sum += noise.pow(2) as u64;
         }
