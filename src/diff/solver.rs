@@ -138,7 +138,7 @@ impl FlatBlockFinder {
 
                 let trace = gxx + gyy;
                 let det = gxx * gyy - gxy.powi(2);
-                let e_sub = (trace.powi(2) - 4f64 * det).sqrt();
+                let e_sub = (trace.powi(2) - 4f64 * det).max(0.).sqrt();
                 let e1 = (trace + e_sub) / 2.0f64;
                 let e2 = (trace - e_sub) / 2.0f64;
                 // Spectral norm
