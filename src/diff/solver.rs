@@ -9,13 +9,8 @@ use v_frame::{frame::Frame, math::clamp, plane::Plane};
 use self::util::{extract_ar_row, get_block_mean, get_noise_var, linsolve, multiply_mat};
 use super::{NoiseStatus, BLOCK_SIZE, BLOCK_SIZE_SQUARED};
 use crate::{
-    diff::solver::util::normalized_cross_correlation,
-    GrainTableSegment,
-    DEFAULT_GRAIN_SEED,
-    NUM_UV_COEFFS,
-    NUM_UV_POINTS,
-    NUM_Y_COEFFS,
-    NUM_Y_POINTS,
+    diff::solver::util::normalized_cross_correlation, GrainTableSegment, DEFAULT_GRAIN_SEED,
+    NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS,
 };
 
 const LOW_POLY_NUM_PARAMS: usize = 3;

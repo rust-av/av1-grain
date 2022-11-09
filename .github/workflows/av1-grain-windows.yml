@@ -15,17 +15,17 @@ on:
       - main
 
 jobs:
-  clippy-rustfmt:
+  build-test:
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install nightly
+      - name: Install Rust stable
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly
+          toolchain: stable
           override: true
           components: rustfmt, clippy
 
@@ -40,19 +40,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-targets --tests --benches -- -D warnings
-
-  build-test:
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Rust stable
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
 
       - name: Build
         run: cargo build --verbose --tests --benches

@@ -19,14 +19,7 @@ use nom::{
     error::{Error as NomError, ErrorKind, FromExternalError, ParseError},
     multi::{many1, separated_list0, separated_list1},
     sequence::{delimited, preceded},
-    AsChar,
-    Compare,
-    Err as NomErr,
-    IResult,
-    InputIter,
-    InputLength,
-    InputTakeAtPosition,
-    Parser,
+    AsChar, Compare, Err as NomErr, IResult, InputIter, InputLength, InputTakeAtPosition, Parser,
     Slice,
 };
 

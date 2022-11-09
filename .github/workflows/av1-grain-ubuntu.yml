@@ -9,17 +9,17 @@ on:
       - main
 
 jobs:
-  clippy-rustfmt:
+  build-test:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install nightly
+      - name: Install Rust stable
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly
+          toolchain: stable
           override: true
           components: rustfmt, clippy
 
@@ -34,19 +34,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-targets --tests --benches -- -D warnings
-
-  build-test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Rust stable
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
 
       - name: Build
         run: cargo build --verbose --tests --benches
@@ -111,31 +98,31 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path-to-lcov: lcov.info
 
-#      - name: Get total coverage
-#        run: |
-#          grcov . --binary-path ./target/debug/ -t covdir -s . \
-#                --token YOUR_COVDIR_TOKEN > covdir.json
-#
-#      - name: Evaluate code coverage value
-#        shell: bash
-#        run: |
-#          # Retrieve code coverage associated to the repository
-#          FLOAT_COVERAGE=$(jq '.coveragePercent' covdir.json)
-#          # Round the float value to the nearest value
-#          COVERAGE_OUTPUT=$(printf "%.0f" $FLOAT_COVERAGE)
-#          # If code coverage >= 80, green traffic light
-#          if [ $COVERAGE_OUTPUT -ge 80 ]
-#          then
-#              echo "$COVERAGE_OUTPUT > 80 --> Green"
-#          # If code coverage is >=60 but < 80, orange traffic light
-#          elif [ $COVERAGE_OUTPUT -ge 60 ]
-#          then
-#              echo "60 <= $COVERAGE_OUTPUT < 80 --> Orange"
-#          # Otherwise, red traffic light
-#          else
-#              echo "$COVERAGE_OUTPUT < 60 --> Red"
-#              exit 1
-#          fi
+  #      - name: Get total coverage
+  #        run: |
+  #          grcov . --binary-path ./target/debug/ -t covdir -s . \
+  #                --token YOUR_COVDIR_TOKEN > covdir.json
+  #
+  #      - name: Evaluate code coverage value
+  #        shell: bash
+  #        run: |
+  #          # Retrieve code coverage associated to the repository
+  #          FLOAT_COVERAGE=$(jq '.coveragePercent' covdir.json)
+  #          # Round the float value to the nearest value
+  #          COVERAGE_OUTPUT=$(printf "%.0f" $FLOAT_COVERAGE)
+  #          # If code coverage >= 80, green traffic light
+  #          if [ $COVERAGE_OUTPUT -ge 80 ]
+  #          then
+  #              echo "$COVERAGE_OUTPUT > 80 --> Green"
+  #          # If code coverage is >=60 but < 80, orange traffic light
+  #          elif [ $COVERAGE_OUTPUT -ge 60 ]
+  #          then
+  #              echo "60 <= $COVERAGE_OUTPUT < 80 --> Orange"
+  #          # Otherwise, red traffic light
+  #          else
+  #              echo "$COVERAGE_OUTPUT < 60 --> Red"
+  #              exit 1
+  #          fi
 
   memory-and-threads-dynamic-analysis:
     runs-on: ubuntu-latest
