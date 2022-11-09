@@ -742,58 +742,78 @@ impl NoiseModel {
         let state = &mut self.latest_state[channel];
         let a = &mut state.eqns.a;
         let b = &mut state.eqns.b;
-        let mut buffer = vec![0f64; num_coords + 1];
+        let mut buffer = vec![0f64; num_coords + 1].into_boxed_slice();
         let n = state.eqns.n;
         let block_w = BLOCK_SIZE >> source.cfg.xdec;
         let block_h = BLOCK_SIZE >> source.cfg.ydec;
 
+        let dec = (source.cfg.xdec, source.cfg.ydec);
+        let stride = source.cfg.stride;
+        let source_origin = source.data_origin();
+        let denoised_origin = denoised.data_origin();
+        let alt_stride = alt_source.map_or(0, |s| s.cfg.stride);
+        let alt_source_origin = alt_source.map(|s| s.data_origin());
+        let alt_denoised_origin = alt_denoised.map(|s| s.data_origin());
+
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
             for bx in 0..num_blocks_w {
-                let x_o = bx * block_w;
-                if flat_blocks[by * num_blocks_w + bx] == 0 {
-                    continue;
-                }
-                let y_start = if by > 0 && flat_blocks[(by - 1) * num_blocks_w + bx] > 0 {
-                    0
-                } else {
-                    NOISE_MODEL_LAG
-                };
-                let x_start = if bx > 0 && flat_blocks[by * num_blocks_w + bx - 1] > 0 {
-                    0
-                } else {
-                    NOISE_MODEL_LAG
-                };
-                let y_end = ((frame_dims.1 >> source.cfg.ydec) - by * block_h).min(block_h);
-                let x_end = ((frame_dims.0 >> source.cfg.xdec) - bx * block_w - NOISE_MODEL_LAG)
-                    .min(
-                        if bx + 1 < num_blocks_w && flat_blocks[by * num_blocks_w + bx + 1] > 0 {
-                            block_w
+                // SAFETY: We know the indexes we provide do not overflow the data bounds
+                unsafe {
+                    let x_o = bx * block_w;
+                    if *flat_blocks.get_unchecked(by * num_blocks_w + bx) == 0 {
+                        continue;
+                    }
+                    let y_start =
+                        if by > 0 && *flat_blocks.get_unchecked((by - 1) * num_blocks_w + bx) > 0 {
+                            0
                         } else {
-                            block_w - NOISE_MODEL_LAG
-                        },
-                    );
-                for y in y_start..y_end {
-                    for x in x_start..x_end {
-                        let val = extract_ar_row(
-                            &self.coords,
-                            num_coords,
-                            source,
-                            denoised,
-                            alt_source,
-                            alt_denoised,
-                            x + x_o,
-                            y + y_o,
-                            &mut buffer,
+                            NOISE_MODEL_LAG
+                        };
+                    let x_start =
+                        if bx > 0 && *flat_blocks.get_unchecked(by * num_blocks_w + bx - 1) > 0 {
+                            0
+                        } else {
+                            NOISE_MODEL_LAG
+                        };
+                    let y_end = ((frame_dims.1 >> source.cfg.ydec) - by * block_h).min(block_h);
+                    let x_end =
+                        ((frame_dims.0 >> source.cfg.xdec) - bx * block_w - NOISE_MODEL_LAG).min(
+                            if bx + 1 < num_blocks_w
+                                && *flat_blocks.get_unchecked(by * num_blocks_w + bx + 1) > 0
+                            {
+                                block_w
+                            } else {
+                                block_w - NOISE_MODEL_LAG
+                            },
                         );
-                        for i in 0..n {
-                            for j in 0..n {
-                                a[i * n + j] +=
-                                    (buffer[i] * buffer[j]) / BLOCK_NORMALIZATION.powi(2);
+                    for y in y_start..y_end {
+                        for x in x_start..x_end {
+                            let val = extract_ar_row(
+                                &self.coords,
+                                num_coords,
+                                source_origin,
+                                denoised_origin,
+                                stride,
+                                dec,
+                                alt_source_origin,
+                                alt_denoised_origin,
+                                alt_stride,
+                                x + x_o,
+                                y + y_o,
+                                &mut buffer,
+                            );
+                            for i in 0..n {
+                                for j in 0..n {
+                                    *a.get_unchecked_mut(i * n + j) += (*buffer.get_unchecked(i)
+                                        * *buffer.get_unchecked(j))
+                                        / BLOCK_NORMALIZATION.powi(2);
+                                }
+                                *b.get_unchecked_mut(i) +=
+                                    (*buffer.get_unchecked(i) * val) / BLOCK_NORMALIZATION.powi(2);
                             }
-                            b[i] += (buffer[i] * val) / BLOCK_NORMALIZATION.powi(2);
+                            state.num_observations += 1;
                         }
-                        state.num_observations += 1;
                     }
                 }
             }

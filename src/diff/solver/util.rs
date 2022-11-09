@@ -98,46 +98,60 @@ pub(super) fn normalized_cross_correlation(a: &[f64], b: &[f64], n: usize) -> f6
 pub(super) fn extract_ar_row(
     coords: &[[isize; 2]],
     num_coords: usize,
-    source: &Plane<u8>,
-    denoised: &Plane<u8>,
-    alt_source: Option<&Plane<u8>>,
-    alt_denoised: Option<&Plane<u8>>,
+    source_origin: &[u8],
+    denoised_origin: &[u8],
+    stride: usize,
+    dec: (usize, usize),
+    alt_source_origin: Option<&[u8]>,
+    alt_denoised_origin: Option<&[u8]>,
+    alt_stride: usize,
     x: usize,
     y: usize,
     buffer: &mut [f64],
 ) -> f64 {
-    let stride = source.cfg.stride;
-    for i in 0..num_coords {
-        let x_i = x as isize + coords[i][0];
-        let y_i = y as isize + coords[i][1];
-        debug_assert!(x_i >= 0);
-        debug_assert!(y_i >= 0);
-        buffer[i] = f64::from(source.data_origin()[y_i as usize * stride + x_i as usize])
-            - f64::from(denoised.data_origin()[y_i as usize * stride + x_i as usize]);
-    }
-    let val = f64::from(source.data_origin()[y * stride + x])
-        - f64::from(denoised.data_origin()[y * stride + x]);
+    debug_assert!(buffer.len() > num_coords);
+    debug_assert!(coords.len() >= num_coords);
 
-    if let Some(alt_source) = alt_source {
-        if let Some(alt_denoised) = alt_denoised {
-            let alt_stride = alt_source.cfg.stride;
-            let mut source_sum = 0u64;
-            let mut denoised_sum = 0u64;
-            let mut num_samples = 0usize;
-            for dy_i in 0..(1 << source.cfg.ydec) {
-                let y_up = (y << source.cfg.ydec) + dy_i;
-                for dx_i in 0..(1 << source.cfg.xdec) {
-                    let x_up = (x << source.cfg.xdec) + dx_i;
-                    source_sum += u64::from(alt_source.data_origin()[y_up * alt_stride + x_up]);
-                    denoised_sum += u64::from(alt_denoised.data_origin()[y_up * alt_stride + x_up]);
-                    num_samples += 1;
-                }
-            }
-            buffer[num_coords] = (source_sum as f64 - denoised_sum as f64) / num_samples as f64;
+    // SAFETY: We know the indexes we provide do not overflow the data bounds
+    unsafe {
+        for i in 0..num_coords {
+            let x_i = x as isize + coords.get_unchecked(i)[0];
+            let y_i = y as isize + coords.get_unchecked(i)[1];
+            debug_assert!(x_i >= 0);
+            debug_assert!(y_i >= 0);
+            *buffer.get_unchecked_mut(i) =
+                f64::from(*source_origin.get_unchecked(y_i as usize * stride + x_i as usize))
+                    - f64::from(
+                        *denoised_origin.get_unchecked(y_i as usize * stride + x_i as usize),
+                    );
         }
-    }
+        let val = f64::from(*source_origin.get_unchecked(y * stride + x))
+            - f64::from(*denoised_origin.get_unchecked(y * stride + x));
 
-    val
+        if let Some(alt_source_origin) = alt_source_origin {
+            if let Some(alt_denoised_origin) = alt_denoised_origin {
+                let mut source_sum = 0u64;
+                let mut denoised_sum = 0u64;
+                let mut num_samples = 0usize;
+
+                for dy_i in 0..(1 << dec.1) {
+                    let y_up = (y << dec.1) + dy_i;
+                    for dx_i in 0..(1 << dec.0) {
+                        let x_up = (x << dec.0) + dx_i;
+                        source_sum +=
+                            u64::from(*alt_source_origin.get_unchecked(y_up * alt_stride + x_up));
+                        denoised_sum +=
+                            u64::from(*alt_denoised_origin.get_unchecked(y_up * alt_stride + x_up));
+                        num_samples += 1;
+                    }
+                }
+                *buffer.get_unchecked_mut(num_coords) =
+                    (source_sum as f64 - denoised_sum as f64) / num_samples as f64;
+            }
+        }
+
+        val
+    }
 }
 
 #[must_use]
