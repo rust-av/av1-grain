@@ -155,7 +155,7 @@ jobs:
       # FIXME Use binaries
       - name: Install cargo-fuzz
         run: |
-          cargo install cargo-fuzz
+          cargo install cargo-fuzz --force
 
       - name: Run miri
         env:
