@@ -119,11 +119,9 @@ pub(super) fn extract_ar_row(
             let y_i = y as isize + coords.get_unchecked(i)[1];
             debug_assert!(x_i >= 0);
             debug_assert!(y_i >= 0);
-            *buffer.get_unchecked_mut(i) =
-                f64::from(*source_origin.get_unchecked(y_i as usize * stride + x_i as usize))
-                    - f64::from(
-                        *denoised_origin.get_unchecked(y_i as usize * stride + x_i as usize),
-                    );
+            let index = y_i as usize * stride + x_i as usize;
+            *buffer.get_unchecked_mut(i) = f64::from(*source_origin.get_unchecked(index))
+                - f64::from(*denoised_origin.get_unchecked(index));
         }
         let val = f64::from(*source_origin.get_unchecked(y * stride + x))
             - f64::from(*denoised_origin.get_unchecked(y * stride + x));
@@ -138,10 +136,9 @@ pub(super) fn extract_ar_row(
                     let y_up = (y << dec.1) + dy_i;
                     for dx_i in 0..(1 << dec.0) {
                         let x_up = (x << dec.0) + dx_i;
-                        source_sum +=
-                            u64::from(*alt_source_origin.get_unchecked(y_up * alt_stride + x_up));
-                        denoised_sum +=
-                            u64::from(*alt_denoised_origin.get_unchecked(y_up * alt_stride + x_up));
+                        let index = y_up * alt_stride + x_up;
+                        source_sum += u64::from(*alt_source_origin.get_unchecked(index));
+                        denoised_sum += u64::from(*alt_denoised_origin.get_unchecked(index));
                         num_samples += 1;
                     }
                 }
