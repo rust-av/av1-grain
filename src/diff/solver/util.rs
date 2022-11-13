@@ -1,3 +1,5 @@
+use std::ptr;
+
 use v_frame::plane::Plane;
 
 use crate::diff::BLOCK_SIZE;
@@ -11,43 +13,64 @@ pub(super) fn linsolve(
     b: &mut [f64],
     x: &mut [f64],
 ) -> bool {
-    // Forward elimination
-    for k in 0..(n - 1) {
-        // Bring the largest magnitude to the diagonal position
-        ((k + 1)..n).rev().for_each(|i| {
-            if a[(i - 1) * stride + k].abs() < a[i * stride + k].abs() {
-                (0..n).for_each(|j| {
-                    a.swap(i * stride + j, (i - 1) * stride + j);
-                });
-                b.swap(i, i - 1);
-            }
-        });
+    // SAFETY: We need to ensure that `n` doesn't exceed the bounds of these arrays.
+    // But this is a crate-private function, so we control all input.
+    unsafe {
+        // Forward elimination
+        for k in 0..(n - 1) {
+            // Bring the largest magnitude to the diagonal position
+            ((k + 1)..n).rev().for_each(|i| {
+                if a.get_unchecked((i - 1) * stride + k).abs()
+                    < a.get_unchecked(i * stride + k).abs()
+                {
+                    (0..n).for_each(|j| {
+                        swap_unchecked(a, i * stride + j, (i - 1) * stride + j);
+                    });
+                    swap_unchecked(b, i, i - 1);
+                }
+            });
 
-        for i in k..(n - 1) {
-            if a[k * stride + k].abs() < f64::EPSILON {
+            for i in k..(n - 1) {
+                if a.get_unchecked(k * stride + k).abs() < f64::EPSILON {
+                    return false;
+                }
+                let c = *a.get_unchecked((i + 1) * stride + k) / *a.get_unchecked(k * stride + k);
+                (0..n).for_each(|j| {
+                    let a2_val = *a.get_unchecked(k * stride + j);
+                    let a_val = a.get_unchecked_mut((i + 1) * stride + j);
+                    *a_val = c.mul_add(-a2_val, *a_val);
+                });
+                let b2_val = *b.get_unchecked(k);
+                let b_val = b.get_unchecked_mut(i + 1);
+                *b_val = c.mul_add(-b2_val, *b_val);
+            }
+        }
+
+        // Backward substitution
+        for i in (0..n).rev() {
+            if a.get_unchecked(i * stride + i).abs() < f64::EPSILON {
                 return false;
             }
-            let c = a[(i + 1) * stride + k] / a[k * stride + k];
-            (0..n).for_each(|j| {
-                a[(i + 1) * stride + j] -= c * a[k * stride + j];
-            });
-            b[i + 1] -= c * b[k];
+            let mut c = 0.0f64;
+            for j in (i + 1)..n {
+                c = a
+                    .get_unchecked(i * stride + j)
+                    .mul_add(*x.get_unchecked(j), c);
+            }
+            *x.get_unchecked_mut(i) = (*b.get_unchecked(i) - c) / *a.get_unchecked(i * stride + i);
         }
-    }
-
-    // Backward substitution
-    for i in (0..n).rev() {
-        if a[i * stride + i].abs() < f64::EPSILON {
-            return false;
-        }
-        let mut c = 0.0f64;
-        for j in (i + 1)..n {
-            c += a[i * stride + j] * x[j];
-        }
-        x[i] = (b[i] - c) / a[i * stride + i];
     }
 
     true
+}
+
+// TODO: This is unstable upstream. Once it's stable upstream, use that.
+unsafe fn swap_unchecked<T>(slice: &mut [T], a: usize, b: usize) {
+    let ptr = slice.as_mut_ptr();
+    // SAFETY: caller has to guarantee that `a < self.len()` and `b < self.len()`
+    unsafe {
+        ptr::swap(ptr.add(a), ptr.add(b));
+    }
 }
 
 pub(super) fn multiply_mat(
