@@ -189,18 +189,23 @@ pub(super) fn get_noise_var(
     let max_h = (frame_dims.1 - y_o).min(block_h);
     let max_w = (frame_dims.0 - x_o).min(block_w);
 
+    let source_origin = source.data_origin();
+    let denoised_origin = denoised.data_origin();
     let mut noise_var_sum = 0u64;
     let mut noise_sum = 0i64;
     for y in 0..max_h {
         for x in 0..max_w {
             let index = (y_o + y) * source.cfg.stride + x_o + x;
-            let noise =
-                i64::from(source.data_origin()[index]) - i64::from(denoised.data_origin()[index]);
-            noise_sum += noise;
-            noise_var_sum += noise.pow(2) as u64;
+            // SAFETY: We know the index cannot exceed the dimensions of the plane data
+            unsafe {
+                let noise = i64::from(*source_origin.get_unchecked(index))
+                    - i64::from(*denoised_origin.get_unchecked(index));
+                noise_sum += noise;
+                noise_var_sum += noise.pow(2) as u64;
+            }
         }
     }
 
     let noise_mean = noise_sum as f64 / (max_w * max_h) as f64;
-    noise_var_sum as f64 / (max_w * max_h) as f64 - noise_mean.powi(2)
+    noise_mean.mul_add(-noise_mean, noise_var_sum as f64 / (max_w * max_h) as f64)
 }
