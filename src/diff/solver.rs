@@ -792,15 +792,14 @@ impl NoiseModel {
                     } else {
                         NOISE_MODEL_LAG
                     };
-                    let y_end = ((frame_dims.1 >> source.cfg.ydec) - by * block_h).min(block_h);
-                    let x_end = ((frame_dims.0 >> source.cfg.xdec)
-                        - bx * block_w
-                        - NOISE_MODEL_LAG)
-                        .min(if bx + 1 < num_blocks_w && *flat_block_ptr.add(1) > 0 {
+                    let y_end = ((frame_dims.1 >> dec.1) - by * block_h).min(block_h);
+                    let x_end = ((frame_dims.0 >> dec.0) - bx * block_w - NOISE_MODEL_LAG).min(
+                        if bx + 1 < num_blocks_w && *flat_block_ptr.add(1) > 0 {
                             block_w
                         } else {
                             block_w - NOISE_MODEL_LAG
-                        });
+                        },
+                    );
                     for y in y_start..y_end {
                         for x in x_start..x_end {
                             let val = extract_ar_row(
