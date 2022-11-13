@@ -86,10 +86,10 @@ pub(super) fn normalized_cross_correlation(a: &[f64], b: &[f64], n: usize) -> f6
     let mut c = 0f64;
     let mut a_len = 0f64;
     let mut b_len = 0f64;
-    for i in 0..n {
-        a_len += a[i].powi(2);
-        b_len += b[i].powi(2);
-        c += a[i] * b[i];
+    for (a, b) in a.iter().zip(b.iter()).take(n) {
+        a_len = (*a).mul_add(*a, a_len);
+        b_len = (*b).mul_add(*b, b_len);
+        c = (*a).mul_add(*b, c);
     }
     c / (a_len.sqrt() * b_len.sqrt())
 }
