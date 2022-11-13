@@ -161,11 +161,15 @@ pub(super) fn get_block_mean(
     let max_h = (frame_dims.1 - y_o).min(BLOCK_SIZE);
     let max_w = (frame_dims.0 - x_o).min(BLOCK_SIZE);
 
+    let data_origin = source.data_origin();
     let mut block_sum = 0u64;
     for y in 0..max_h {
         for x in 0..max_w {
             let index = (y_o + y) * source.cfg.stride + x_o + x;
-            block_sum += u64::from(source.data_origin()[index]);
+            // SAFETY: We know the index cannot exceed the dimensions of the plane data
+            unsafe {
+                block_sum += u64::from(*data_origin.get_unchecked(index));
+            }
         }
     }
 
