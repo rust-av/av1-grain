@@ -777,33 +777,30 @@ impl NoiseModel {
             for bx in 0..num_blocks_w {
                 // SAFETY: We know the indexes we provide do not overflow the data bounds
                 unsafe {
+                    let flat_block_ptr = flat_blocks.as_ptr().add(by * num_blocks_w + bx);
                     let x_o = bx * block_w;
-                    if *flat_blocks.get_unchecked(by * num_blocks_w + bx) == 0 {
+                    if *flat_block_ptr == 0 {
                         continue;
                     }
-                    let y_start =
-                        if by > 0 && *flat_blocks.get_unchecked((by - 1) * num_blocks_w + bx) > 0 {
-                            0
-                        } else {
-                            NOISE_MODEL_LAG
-                        };
-                    let x_start =
-                        if bx > 0 && *flat_blocks.get_unchecked(by * num_blocks_w + bx - 1) > 0 {
-                            0
-                        } else {
-                            NOISE_MODEL_LAG
-                        };
+                    let y_start = if by > 0 && *flat_block_ptr.sub(num_blocks_w) > 0 {
+                        0
+                    } else {
+                        NOISE_MODEL_LAG
+                    };
+                    let x_start = if bx > 0 && *flat_block_ptr.sub(1) > 0 {
+                        0
+                    } else {
+                        NOISE_MODEL_LAG
+                    };
                     let y_end = ((frame_dims.1 >> source.cfg.ydec) - by * block_h).min(block_h);
-                    let x_end =
-                        ((frame_dims.0 >> source.cfg.xdec) - bx * block_w - NOISE_MODEL_LAG).min(
-                            if bx + 1 < num_blocks_w
-                                && *flat_blocks.get_unchecked(by * num_blocks_w + bx + 1) > 0
-                            {
-                                block_w
-                            } else {
-                                block_w - NOISE_MODEL_LAG
-                            },
-                        );
+                    let x_end = ((frame_dims.0 >> source.cfg.xdec)
+                        - bx * block_w
+                        - NOISE_MODEL_LAG)
+                        .min(if bx + 1 < num_blocks_w && *flat_block_ptr.add(1) > 0 {
+                            block_w
+                        } else {
+                            block_w - NOISE_MODEL_LAG
+                        });
                     for y in y_start..y_end {
                         for x in x_start..x_end {
                             let val = extract_ar_row(
