@@ -206,13 +206,19 @@ impl FlatBlockFinder {
     ) {
         let mut plane_coords = [0f64; LOW_POLY_NUM_PARAMS];
         let mut a_t_a_inv_b = [0f64; LOW_POLY_NUM_PARAMS];
+        let plane_origin = plane.data_origin();
 
         for yi in 0..BLOCK_SIZE {
             let y = clamp(offset_y + yi, 0, plane.cfg.height - 1);
             for xi in 0..BLOCK_SIZE {
                 let x = clamp(offset_x + xi, 0, plane.cfg.width - 1);
-                block_result[yi * BLOCK_SIZE + xi] =
-                    f64::from(plane.data_origin()[y * plane.cfg.stride + x]) / BLOCK_NORMALIZATION;
+                // SAFETY: We know the bounds of the plane data and `block_result`
+                // and do not exceed them.
+                unsafe {
+                    *block_result.as_mut_ptr().add(yi * BLOCK_SIZE + xi) =
+                        f64::from(*plane_origin.as_ptr().add(y * plane.cfg.stride + x))
+                            / BLOCK_NORMALIZATION;
+                }
             }
         }
 
@@ -241,8 +247,8 @@ impl FlatBlockFinder {
             1,
         );
 
-        for i in 0..BLOCK_SIZE_SQUARED {
-            block_result[i] -= plane_result[i];
+        for (block_res, plane_res) in block_result.iter_mut().zip(plane_result.iter()) {
+            *block_res -= *plane_res;
         }
     }
 }
