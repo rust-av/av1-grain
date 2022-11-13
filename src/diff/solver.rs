@@ -165,8 +165,8 @@ impl FlatBlockFinder {
                 // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
                 unsafe {
                     let index = by * num_blocks_w + bx;
-                    *flat_blocks.as_mut_ptr().add(index) = if is_flat { 255 } else { 0 };
-                    *scores.as_mut_ptr().add(index) = IndexAndScore {
+                    *flat_blocks.get_unchecked_mut(index) = if is_flat { 255 } else { 0 };
+                    *scores.get_unchecked_mut(index) = IndexAndScore {
                         score: if var > VAR_THRESHOLD { score } else { 0f32 },
                         index,
                     };
@@ -181,14 +181,14 @@ impl FlatBlockFinder {
         // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
         unsafe {
             let top_nth_percentile = num_blocks * 90 / 100;
-            let score_threshold = (*scores.as_ptr().add(top_nth_percentile)).score;
+            let score_threshold = scores.get_unchecked(top_nth_percentile).score;
             for score in &scores {
                 if score.score >= score_threshold {
-                    let block_ptr = flat_blocks.as_mut_ptr().add(score.index);
-                    if *block_ptr == 0 {
+                    let block_ref = flat_blocks.get_unchecked_mut(score.index);
+                    if *block_ref == 0 {
                         num_flat += 1;
                     }
-                    *block_ptr |= 1;
+                    *block_ref |= 1;
                 }
             }
         }
@@ -215,8 +215,8 @@ impl FlatBlockFinder {
                 // SAFETY: We know the bounds of the plane data and `block_result`
                 // and do not exceed them.
                 unsafe {
-                    *block_result.as_mut_ptr().add(yi * BLOCK_SIZE + xi) =
-                        f64::from(*plane_origin.as_ptr().add(y * plane.cfg.stride + x))
+                    *block_result.get_unchecked_mut(yi * BLOCK_SIZE + xi) =
+                        f64::from(*plane_origin.get_unchecked(y * plane.cfg.stride + x))
                             / BLOCK_NORMALIZATION;
                 }
             }
