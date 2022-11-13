@@ -69,6 +69,7 @@ impl FlatBlockFinder {
     // The thresholds are more lenient to allow for correct grain modeling
     // in extreme cases.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn run(&self, plane: &Plane<u8>) -> (Vec<u8>, usize) {
         const TRACE_THRESHOLD: f64 = 0.15f64 / BLOCK_SIZE_SQUARED as f64;
         const RATIO_THRESHOLD: f64 = 1.25f64;
@@ -112,19 +113,21 @@ impl FlatBlockFinder {
                 );
                 for yi in 1..(BLOCK_SIZE - 1) {
                     for xi in 1..(BLOCK_SIZE - 1) {
-                        let gx = (block_result[yi * BLOCK_SIZE + xi + 1]
-                            - block_result[yi * BLOCK_SIZE + xi - 1])
-                            / 2f64;
-                        let gy = (block_result[yi * BLOCK_SIZE + xi + BLOCK_SIZE]
-                            - block_result[yi * BLOCK_SIZE + xi - BLOCK_SIZE])
-                            / 2f64;
-                        gxx += gx * gx;
-                        gxy += gx * gy;
-                        gyy += gy * gy;
+                        // SAFETY: We know the size of `block_result` and that we cannot exceed the bounds of it
+                        unsafe {
+                            let result_ptr = block_result.as_ptr().add(yi * BLOCK_SIZE + xi);
 
-                        let block_val = block_result[yi * BLOCK_SIZE + xi];
-                        mean += block_val;
-                        var += block_val * block_val;
+                            let gx = (*result_ptr.add(1) - *result_ptr.sub(1)) / 2f64;
+                            let gy =
+                                (*result_ptr.add(BLOCK_SIZE) - *result_ptr.sub(BLOCK_SIZE)) / 2f64;
+                            gxx += gx * gx;
+                            gxy += gx * gy;
+                            gyy += gy * gy;
+
+                            let block_val = *result_ptr;
+                            mean += block_val;
+                            var += block_val * block_val;
+                        }
                     }
                 }
                 let block_size_norm_factor = (BLOCK_SIZE - 2).pow(2) as f64;
@@ -137,8 +140,8 @@ impl FlatBlockFinder {
                 var = var / block_size_norm_factor - mean.powi(2);
 
                 let trace = gxx + gyy;
-                let det = gxx * gyy - gxy.powi(2);
-                let e_sub = (trace.powi(2) - 4f64 * det).max(0.).sqrt();
+                let det = gxx.mul_add(gyy, -gxy.powi(2));
+                let e_sub = (trace.mul_add(trace, -4f64 * det)).max(0.).sqrt();
                 let e1 = (trace + e_sub) / 2.0f64;
                 let e2 = (trace - e_sub) / 2.0f64;
                 // Spectral norm
@@ -159,11 +162,15 @@ impl FlatBlockFinder {
                 // clamp the value to [-25.0, 100.0] to prevent overflow
                 let sum_weights = clamp(sum_weights, -25.0f64, 100.0f64);
                 let score = (1.0f64 / (1.0f64 + (-sum_weights).exp())) as f32;
-                flat_blocks[by * num_blocks_w + bx] = if is_flat { 255 } else { 0 };
-                scores[by * num_blocks_w + bx] = IndexAndScore {
-                    score: if var > VAR_THRESHOLD { score } else { 0f32 },
-                    index: by * num_blocks_w + bx,
-                };
+                // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
+                unsafe {
+                    let index = by * num_blocks_w + bx;
+                    *flat_blocks.as_mut_ptr().add(index) = if is_flat { 255 } else { 0 };
+                    *scores.as_mut_ptr().add(index) = IndexAndScore {
+                        score: if var > VAR_THRESHOLD { score } else { 0f32 },
+                        index,
+                    };
+                }
                 if is_flat {
                     num_flat += 1;
                 }
@@ -171,14 +178,18 @@ impl FlatBlockFinder {
         }
 
         scores.sort_unstable_by(|a, b| a.score.partial_cmp(&b.score).expect("Shouldn't be NaN"));
-        let top_nth_percentile = num_blocks * 90 / 100;
-        let score_threshold = scores[top_nth_percentile].score;
-        for score in &scores {
-            if score.score >= score_threshold {
-                if flat_blocks[score.index] == 0 {
-                    num_flat += 1;
+        // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
+        unsafe {
+            let top_nth_percentile = num_blocks * 90 / 100;
+            let score_threshold = (*scores.as_ptr().add(top_nth_percentile)).score;
+            for score in &scores {
+                if score.score >= score_threshold {
+                    let block_ptr = flat_blocks.as_mut_ptr().add(score.index);
+                    if *block_ptr == 0 {
+                        num_flat += 1;
+                    }
+                    *block_ptr |= 1;
                 }
-                flat_blocks[score.index] |= 1;
             }
         }
 
