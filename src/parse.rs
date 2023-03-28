@@ -10,7 +10,6 @@
 use std::ops::{Range, RangeFrom, RangeTo};
 
 use arrayvec::ArrayVec;
-use itertools::Itertools;
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -376,17 +375,9 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
 
     Ok((
         input,
-        values
-            .into_iter()
-            .skip(1)
-            .chunks(2)
-            .into_iter()
-            .map(|mut chunk| {
-                let mut vals = [0u8; 2];
-                vals[0] = chunk.next().unwrap();
-                vals[1] = chunk.next().unwrap();
-                vals
-            })
+        values[1..]
+            .chunks_exact(2)
+            .map(|chunk| [chunk[0], chunk[1]])
             .collect(),
     ))
 }
@@ -427,17 +418,9 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 
     Ok((
         input,
-        values
-            .into_iter()
-            .skip(1)
-            .chunks(2)
-            .into_iter()
-            .map(|mut chunk| {
-                let mut vals = [0u8; 2];
-                vals[0] = chunk.next().unwrap();
-                vals[1] = chunk.next().unwrap();
-                vals
-            })
+        values[1..]
+            .chunks_exact(2)
+            .map(|chunk| [chunk[0], chunk[1]])
             .collect(),
     ))
 }
@@ -478,17 +461,9 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 
     Ok((
         input,
-        values
-            .into_iter()
-            .skip(1)
-            .chunks(2)
-            .into_iter()
-            .map(|mut chunk| {
-                let mut vals = [0u8; 2];
-                vals[0] = chunk.next().unwrap();
-                vals[1] = chunk.next().unwrap();
-                vals
-            })
+        values[1..]
+            .chunks_exact(2)
+            .map(|chunk| [chunk[0], chunk[1]])
             .collect(),
     ))
 }
@@ -639,8 +614,8 @@ E 0 9223372036854775807 1 7391 1
         scaling_shift: 8,
         ar_coeff_lag: 0,
         ar_coeffs_y: ArrayVec::new(),
-        ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).unwrap(),
-        ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).unwrap(),
+        ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
+        ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
         ar_coeff_shift: 6,
         cb_mult: 0,
         cb_luma_mult: 0,
@@ -717,8 +692,8 @@ E 0 9223372036854775807 1 7391 1
         scaling_shift: 8,
         ar_coeff_lag: 0,
         ar_coeffs_y: ArrayVec::new(),
-        ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).unwrap(),
-        ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).unwrap(),
+        ar_coeffs_cb: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
+        ar_coeffs_cr: ArrayVec::try_from([0].as_slice()).expect("Arrayvec has capacity"),
         ar_coeff_shift: 6,
         cb_mult: 128,
         cb_luma_mult: 192,

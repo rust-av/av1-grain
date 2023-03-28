@@ -137,7 +137,7 @@ impl FlatBlockFinder {
                 gxx /= block_size_norm_factor;
                 gxy /= block_size_norm_factor;
                 gyy /= block_size_norm_factor;
-                var = var / block_size_norm_factor - mean.powi(2);
+                var = mean.mul_add(-mean, var / block_size_norm_factor);
 
                 let trace = gxx + gyy;
                 let det = gxx.mul_add(gyy, -gxy.powi(2));
@@ -902,7 +902,7 @@ impl NoiseModel {
                     // But don't allow fully correlated noise (hence the max), since the
                     // synthesis cannot model it.
                     let uncorr_std = (noise_var / 16f64)
-                        .max(noise_var - (corr * luma_strength).powi(2))
+                        .max((corr * luma_strength).mul_add(-(corr * luma_strength), noise_var))
                         .sqrt();
                     let adjusted_strength = uncorr_std / noise_gain;
                     self.latest_state[channel]
@@ -1000,7 +1000,7 @@ impl StrengthSolver {
         let bin = self.get_bin_index(block_mean);
         let bin_i0 = bin.floor() as usize;
         let bin_i1 = (self.num_bins - 1).min(bin_i0 + 1);
-        let a = bin as f64 - bin_i0 as f64;
+        let a = bin - bin_i0 as f64;
         let n = self.num_bins;
         let eqns = &mut self.eqns;
         eqns.a[bin_i0 * n + bin_i0] += (1f64 - a).powi(2);

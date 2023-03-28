@@ -311,7 +311,7 @@ impl TransferFunction {
             }
             TransferFunction::SMPTE2084 => {
                 let pq_pow_inv_m2 = x.powf(1. / PQ_M2);
-                (0_f32.max(pq_pow_inv_m2 - PQ_C1) / (PQ_C2 - PQ_C3 * pq_pow_inv_m2))
+                (0_f32.max(pq_pow_inv_m2 - PQ_C1) / PQ_C3.mul_add(-pq_pow_inv_m2, PQ_C2))
                     .powf(1. / PQ_M1)
             }
         }
@@ -395,7 +395,7 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
             )
             .sqrt();
         let linear_noise = noise_in_electrons / max_electrons_per_pixel;
-        let linear_range_start = 0_f32.max(linear - 2. * linear_noise);
+        let linear_range_start = 0_f32.max(2.0f32.mul_add(-linear_noise, linear));
         let linear_range_end = 1_f32.min(2_f32.mul_add(linear_noise, linear));
         let tf_slope = (args.transfer_function.from_linear(linear_range_end)
             - args.transfer_function.from_linear(linear_range_start))
