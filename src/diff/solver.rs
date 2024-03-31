@@ -380,7 +380,7 @@ impl NoiseModel {
             NoiseModelState::new(n + 1),
             NoiseModelState::new(n + 1),
         ];
-        let mut coords = Vec::new();
+        let mut coords = Vec::with_capacity(n);
 
         let neg_lag = -(NOISE_MODEL_LAG as isize);
         for y in neg_lag..=0 {
