@@ -2,12 +2,11 @@ mod util;
 
 use std::ops::{Add, AddAssign};
 
-use anyhow::anyhow;
 use arrayvec::ArrayVec;
 use v_frame::{frame::Frame, math::clamp, plane::Plane};
 
 use self::util::{extract_ar_row, get_block_mean, get_noise_var, linsolve, multiply_mat};
-use super::{NoiseStatus, BLOCK_SIZE, BLOCK_SIZE_SQUARED};
+use super::{BLOCK_SIZE, BLOCK_SIZE_SQUARED};
 use crate::{
     diff::solver::util::normalized_cross_correlation, GrainTableSegment, DEFAULT_GRAIN_SEED,
     NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS,
@@ -360,6 +359,13 @@ pub(super) struct NoiseModel {
     coords: Vec<[isize; 2]>,
 }
 
+#[derive(PartialEq, Eq)]
+pub(super) enum NoiseModelStatus {
+    Ok,
+    DifferentType,
+    Error,
+}
+
 impl NoiseModel {
     #[must_use]
     pub fn new() -> Self {
@@ -402,7 +408,7 @@ impl NoiseModel {
         source: &Frame<u8>,
         denoised: &Frame<u8>,
         flat_blocks: &[u8],
-    ) -> NoiseStatus {
+    ) -> NoiseModelStatus {
         let num_blocks_w = (source.planes[0].cfg.width + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let num_blocks_h = (source.planes[0].cfg.height + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let mut y_model_different = false;
@@ -417,7 +423,8 @@ impl NoiseModel {
         // Check that we have enough flat blocks
         let num_blocks = flat_blocks.iter().filter(|b| **b > 0).count();
         if num_blocks <= 1 {
-            return NoiseStatus::Error(anyhow!("Not enough flat blocks to update noise estimate"));
+            // need more than one flat block to update estimate
+            return NoiseModelStatus::Error;
         }
 
         let frame_dims = (source.planes[0].cfg.width, source.planes[0].cfg.height);
@@ -446,10 +453,7 @@ impl NoiseModel {
                         .eqns
                         .set_chroma_coefficient_fallback_solution();
                 } else {
-                    return NoiseStatus::Error(anyhow!(
-                        "Solving latest noise equation system failed on plane {}",
-                        channel
-                    ));
+                    return NoiseModelStatus::Error;
                 }
             }
             self.add_noise_std_observations(
@@ -463,9 +467,7 @@ impl NoiseModel {
                 num_blocks_h,
             );
             if !self.latest_state[channel].strength_solver.solve() {
-                return NoiseStatus::Error(anyhow!(
-                    "Failed to solve strength solver for latest state"
-                ));
+                return NoiseModelStatus::Error;
             }
 
             // Check noise characteristics and return if error
@@ -489,10 +491,7 @@ impl NoiseModel {
                         .eqns
                         .set_chroma_coefficient_fallback_solution();
                 } else {
-                    return NoiseStatus::Error(anyhow!(
-                        "Solving combined noise equation system failed on plane {}",
-                        channel
-                    ));
+                    return NoiseModelStatus::Error;
                 }
             }
 
@@ -500,17 +499,15 @@ impl NoiseModel {
                 &self.latest_state[channel].strength_solver;
 
             if !self.combined_state[channel].strength_solver.solve() {
-                return NoiseStatus::Error(anyhow!(
-                    "Failed to solve strength solver for combined state"
-                ));
+                return NoiseModelStatus::Error;
             };
         }
 
         if y_model_different {
-            return NoiseStatus::DifferentType;
+            return NoiseModelStatus::DifferentType;
         }
 
-        NoiseStatus::Ok
+        NoiseModelStatus::Ok
     }
 
     #[allow(clippy::too_many_lines)]
