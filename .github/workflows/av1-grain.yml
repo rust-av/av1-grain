@@ -1,0 +1,102 @@
+name: av1-grain
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-Dwarnings"
+
+  GRCOV_LINK: "https://github.com/mozilla/grcov/releases/download"
+  GRCOV_VERSION: "v0.8.19"
+
+jobs:
+  clippy-rustfmt:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable with rustfmt and clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Run rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-features --all-targets
+
+  build-test:
+    runs-on: ubuntu-22.04
+    needs: clippy-rustfmt
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run build
+        run: cargo build --all-features --all-targets
+
+      - name: Run tests
+        run: cargo test
+
+  code-coverage:
+    runs-on: ubuntu-22.04
+    needs: clippy-rustfmt
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable with llvm-tools-preview
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      
+      - name: Install grcov
+        run: |
+          curl -L "$GRCOV_LINK/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" |
+          tar xj -C "$HOME/.cargo/bin"
+
+      - name: Run instrumented tests
+        env:
+          RUSTFLAGS: "-Dwarnings -Cinstrument-coverage -Clink-dead-code"
+          LLVM_PROFILE_FILE: "av1-grain-%p-%m.profraw"
+        run: cargo test
+
+      - name: Get coverage data
+        run: |
+          grcov . --binary-path target/debug/ -s . -t lcov --branch \
+                --keep-only 'src/*' -o lcov.info
+
+      - name: Codecov upload
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  miri:
+    runs-on: ubuntu-22.04
+    needs: clippy-rustfmt
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      # Avoid cluttering output of next step with auto-setup
+      - name: Run miri setup
+        run: cargo miri setup
+
+      - name: Run miri test
+        env:
+          RUSTFLAGS: "-Zrandomize-layout"
+          MIRIFLAGS: "-Zmiri-symbolic-alignment-check"
+        run: cargo miri test

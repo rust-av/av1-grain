@@ -2,7 +2,7 @@ use anyhow::{ensure, Result};
 use num_rational::Rational64;
 use v_frame::{frame::Frame, pixel::Pixel};
 
-use self::solver::{FlatBlockFinder, NoiseModel};
+use self::solver::{FlatBlockFinder, NoiseModel, NoiseModelStatus};
 use crate::{util::frame_into_u8, GrainTableSegment};
 
 mod solver;
@@ -75,7 +75,7 @@ impl DiffGenerator {
         log::debug!("Updating noise model");
         let status = self.noise_model.update(source, denoised, &flat_blocks);
 
-        if status == NoiseStatus::DifferentType {
+        if status == NoiseModelStatus::DifferentType {
             let cur_timestamp = self.frame_count as u64 * 10_000_000u64 * *self.fps.denom() as u64
                 / *self.fps.numer() as u64;
             log::debug!(
@@ -94,22 +94,6 @@ impl DiffGenerator {
         self.frame_count += 1;
 
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-enum NoiseStatus {
-    Ok,
-    DifferentType,
-    Error(anyhow::Error),
-}
-
-impl PartialEq for NoiseStatus {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (&Self::Error(_), &Self::Error(_)) => true,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-        }
     }
 }
 

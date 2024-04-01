@@ -170,15 +170,15 @@ pub fn generate_photon_noise_params(
 #[must_use]
 #[cfg(feature = "unstable")]
 pub fn generate_film_grain_params(
-    start_time: u64,
-    end_time: u64,
-    args: NoiseGenArgs,
+    _start_time: u64,
+    _end_time: u64,
+    _args: NoiseGenArgs,
 ) -> GrainTableSegment {
     todo!("SCIENCE");
     // GrainTableSegment {
-    //     start_time,
-    //     end_time,
-    //     scaling_points_y: generate_luma_noise_points(args),
+    //     _start_time,
+    //     _end_time,
+    //     scaling_points_y: generate_luma_noise_points(_args),
     //     scaling_points_cb: ArrayVec::new(),
     //     scaling_points_cr: ArrayVec::new(),
     //     scaling_shift: 8,
