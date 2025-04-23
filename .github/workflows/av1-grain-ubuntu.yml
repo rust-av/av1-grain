@@ -181,7 +181,7 @@ jobs:
           rust-code-analysis-cli --metrics -O json --pr -o "$HOME/rca-json" -p src/
 
       - name: Upload rust-code-analysis json
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rca-json-ubuntu
           path: ~/rca-json
