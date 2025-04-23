@@ -49,6 +49,7 @@ jobs:
         run: cargo doc --no-deps
 
   undefined-behaviour-fuzzy-dynamic-analysis:
+    needs: [ build-test ]
     runs-on: macos-latest
 
     steps:

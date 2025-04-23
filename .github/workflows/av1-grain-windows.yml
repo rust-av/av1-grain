@@ -51,6 +51,7 @@ jobs:
         run: cargo doc --no-deps
 
   static-code-analysis:
+    needs: [ build-test ]
     runs-on: windows-latest
 
     steps:
