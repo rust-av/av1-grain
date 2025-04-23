@@ -2,7 +2,7 @@
 name = "av1-grain"
 version = "0.2.3"
 edition = "2021"
-rust-version = "1.59.0"
+rust-version = "1.62.1"
 license = "BSD-2-Clause"
 description = "Helpers for generating and parsing AV1 film grain data"
 readme = "README.md"
