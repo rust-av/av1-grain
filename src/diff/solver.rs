@@ -318,7 +318,6 @@ impl EquationSystem {
 impl Add<&EquationSystem> for EquationSystem {
     type Output = EquationSystem;
 
-    #[must_use]
     fn add(self, addend: &EquationSystem) -> Self::Output {
         let mut dest = self.clone();
         let n = self.n;
@@ -1144,7 +1143,6 @@ impl StrengthSolver {
 impl Add<&StrengthSolver> for StrengthSolver {
     type Output = StrengthSolver;
 
-    #[must_use]
     fn add(self, addend: &StrengthSolver) -> Self::Output {
         let mut dest = self;
         dest.eqns += &addend.eqns;
