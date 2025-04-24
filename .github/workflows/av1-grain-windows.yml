@@ -51,6 +51,7 @@ jobs:
         run: cargo doc --no-deps
 
   static-code-analysis:
+    needs: [ build-test ]
     runs-on: windows-latest
 
     steps:
@@ -73,69 +74,7 @@ jobs:
           rust-code-analysis-cli --metrics -O json --pr -o "$HOME/rca-json" -p src/
 
       - name: Upload rust-code-analysis json
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rca-json-windows
           path: ~/rca-json
-
-  weighted-code-coverage:
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install stable
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
-      - name: Install grcov
-        env:
-          GRCOV_LINK: https://github.com/mozilla/grcov/releases/download
-          GRCOV_VERSION: v0.8.7
-          GRCOV_BINARY: grcov-x86_64-pc-windows-msvc.zip
-        run: |
-          curl -LO "$Env:GRCOV_LINK/$Env:GRCOV_VERSION/$Env:GRCOV_BINARY"
-          7z e -y "$Env:GRCOV_BINARY" -o"${env:USERPROFILE}\.cargo\bin"
-
-      - name: Install weighted-code-coverage
-        env:
-          WCC_LINK: https://github.com/giovannitangredi/weighted-code-coverage/releases/download
-          WCC_VERSION: v0.1.0
-          WCC_BINARY: weighted-code-coverage-0.1.0-x86_64-pc-windows-msvc.zip
-        run: |
-          curl -LO "$Env:WCC_LINK/$Env:WCC_VERSION/$Env:WCC_BINARY"
-          7z e -y "$Env:WCC_BINARY" -o"${env:USERPROFILE}\.cargo\bin"
-
-      - name: Install llvm-tools-preview
-        run: |
-          rustup component add llvm-tools-preview
-
-      # Not necessary on a newly created image, but strictly advised
-      - name: Run cargo clean
-        run: |
-          cargo clean
-
-      - name: Run tests
-        env:
-          RUSTFLAGS: "-Cinstrument-coverage"
-          LLVM_PROFILE_FILE: "av1-grain-%p-%m.profraw"
-        run: |
-          cargo test --verbose
-
-      - name: Run grcov
-        run: |
-          grcov . --binary-path ./target/debug/ -t coveralls -s . --token YOUR_COVERALLS_TOKEN > coveralls.json
-
-      - name: Run weighted-code-coverage
-        run: |
-          mkdir $HOME/wcc-output
-          weighted-code-coverage -p src/ -j coveralls.json -c --json $HOME/wcc-output/out.json
-
-      - name: Upload weighted-code-coverage data
-        uses: actions/upload-artifact@v3
-        with:
-          name: weighted-code-coverage-windows
-          path: ~/wcc-output/out.json

@@ -101,6 +101,7 @@ impl DiffGenerator {
 enum NoiseStatus {
     Ok,
     DifferentType,
+    #[allow(dead_code)]
     Error(anyhow::Error),
 }
 

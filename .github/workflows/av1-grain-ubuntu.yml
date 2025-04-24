@@ -41,90 +41,43 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Install cargo-msrv
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-msrv
+
+      - name: Validate minimum Rust version
+        run: |
+          cargo msrv verify
+
       - name: Generate docs
         run: cargo doc --no-deps
 
   code-coverage:
+    needs: [ build-test ]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install Rust stable
-        uses: actions-rs/toolchain@v1
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
+          tool: cargo-llvm-cov
 
-      - name: Install grcov
-        env:
-          GRCOV_LINK: https://github.com/mozilla/grcov/releases/download
-          GRCOV_VERSION: v0.8.7
-        run: |
-          curl -L "$GRCOV_LINK/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" |
-          tar xj -C $HOME/.cargo/bin
+      - name: Generate code coverage
+        run: cargo llvm-cov --lcov --output-path lcov.log
 
-      - name: Install llvm-tools-preview
-        run: |
-          rustup component add llvm-tools-preview
-
-      # Not necessary on a newly created image, but strictly advised
-      - name: Run cargo clean
-        run: |
-          cargo clean
-
-      - name: Run tests
-        env:
-          CARGO_INCREMENTAL: 0
-          LLVM_PROFILE_FILE: "av1-grain-%p-%m.profraw"
-          RUSTFLAGS: >
-            -Cinstrument-coverage -Ccodegen-units=1 -Clink-dead-code
-            -Coverflow-checks=off
-          RUSTDOCFLAGS: >
-            -Cinstrument-coverage -Ccodegen-units=1 -Clink-dead-code
-            -Coverflow-checks=off
-        run: |
-          cargo test --verbose
-
-      - name: Get coverage data for coveralls
-        run: |
-          grcov . --binary-path ./target/debug/ -s . -t lcov --branch \
-                --ignore-not-existing --ignore "/*" --ignore "../*" -o lcov.info
-
-      - name: Coveralls upload
-        uses: coverallsapp/github-action@master
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.log
+          fail_ci_if_error: true
 
-  #      - name: Get total coverage
-  #        run: |
-  #          grcov . --binary-path ./target/debug/ -t covdir -s . \
-  #                --token YOUR_COVDIR_TOKEN > covdir.json
-  #
-  #      - name: Evaluate code coverage value
-  #        shell: bash
-  #        run: |
-  #          # Retrieve code coverage associated to the repository
-  #          FLOAT_COVERAGE=$(jq '.coveragePercent' covdir.json)
-  #          # Round the float value to the nearest value
-  #          COVERAGE_OUTPUT=$(printf "%.0f" $FLOAT_COVERAGE)
-  #          # If code coverage >= 80, green traffic light
-  #          if [ $COVERAGE_OUTPUT -ge 80 ]
-  #          then
-  #              echo "$COVERAGE_OUTPUT > 80 --> Green"
-  #          # If code coverage is >=60 but < 80, orange traffic light
-  #          elif [ $COVERAGE_OUTPUT -ge 60 ]
-  #          then
-  #              echo "60 <= $COVERAGE_OUTPUT < 80 --> Orange"
-  #          # Otherwise, red traffic light
-  #          else
-  #              echo "$COVERAGE_OUTPUT < 60 --> Red"
-  #              exit 1
-  #          fi
 
   memory-and-threads-dynamic-analysis:
+    needs: [ build-test ]
     runs-on: ubuntu-latest
 
     steps:
@@ -152,6 +105,7 @@ jobs:
           cargo valgrind run -- --help
 
   undefined-behaviour-fuzzy-dynamic-analysis:
+    needs: [ build-test ]
     runs-on: ubuntu-latest
 
     steps:
@@ -185,14 +139,12 @@ jobs:
           # -Zrandomize-layout makes sure not to rely on the layout of anything
           # that might change
           RUSTFLAGS: -Zrandomize-layout
-          # -Zmiri-check-number-validity enables checking of integer and float
-          # validity (e.g., they must be initialized and not carry
-          # pointer provenance) as part of enforcing validity invariants.
-          # -Zmiri-tag-raw-pointers enables a lot of extra UB checks relating
-          # to raw pointer aliasing rules.
+          # -Zmiri-strict-provenance enables strict provenance checking in Miri.
+          # This means that casting an integer to a pointer will stop execution
+          # because the provenance of the pointer cannot be determined.
           # -Zmiri-symbolic-alignment-check makes the alignment check more strict.
           MIRIFLAGS: >
-            -Zmiri-check-number-validity -Zmiri-tag-raw-pointers
+            -Zmiri-strict-provenance
             -Zmiri-symbolic-alignment-check
         run: cargo miri test
 
@@ -204,6 +156,7 @@ jobs:
         run: cargo fuzz build
 
   static-code-analysis:
+    needs: [ build-test ]
     runs-on: ubuntu-latest
 
     steps:
@@ -226,69 +179,7 @@ jobs:
           rust-code-analysis-cli --metrics -O json --pr -o "$HOME/rca-json" -p src/
 
       - name: Upload rust-code-analysis json
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rca-json-ubuntu
           path: ~/rca-json
-
-  weighted-code-coverage:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install stable
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
-      - name: Install grcov
-        env:
-          GRCOV_LINK: https://github.com/mozilla/grcov/releases/download
-          GRCOV_VERSION: v0.8.7
-          GRCOV_BINARY: grcov-x86_64-unknown-linux-musl.tar.bz2
-        run: |
-          curl -L "$GRCOV_LINK/$GRCOV_VERSION/$GRCOV_BINARY" |
-          tar xj -C $HOME/.cargo/bin
-
-      - name: Install weighted-code-coverage
-        env:
-          WCC_LINK: https://github.com/giovannitangredi/weighted-code-coverage/releases/download
-          WCC_VERSION: v0.1.0
-          WCC_BINARY: weighted-code-coverage-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-        run: |
-          curl -L "$WCC_LINK/$WCC_VERSION/$WCC_BINARY" |
-          tar xz -C $HOME/.cargo/bin
-
-      - name: Install llvm-tools-preview
-        run: |
-          rustup component add llvm-tools-preview
-
-      # Not necessary on a newly created image, but strictly advised
-      - name: Run cargo clean
-        run: |
-          cargo clean
-
-      - name: Run tests
-        env:
-          RUSTFLAGS: "-Cinstrument-coverage"
-          LLVM_PROFILE_FILE: "av1-grain-%p-%m.profraw"
-        run: |
-          cargo test --verbose
-
-      - name: Run grcov
-        run: |
-          grcov . --binary-path ./target/debug/ -t coveralls -s . --token YOUR_COVERALLS_TOKEN > coveralls.json
-
-      - name: Run weighted-code-coverage
-        run: |
-          mkdir $HOME/wcc-output
-          weighted-code-coverage -p src/ -j coveralls.json -c --json $HOME/wcc-output/out.json
-
-      - name: Upload weighted-code-coverage data
-        uses: actions/upload-artifact@v3
-        with:
-          name: weighted-code-coverage-ubuntu
-          path: ~/wcc-output/out.json

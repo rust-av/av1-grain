@@ -17,9 +17,9 @@ const LOW_POLY_NUM_PARAMS: usize = 3;
 const NOISE_MODEL_LAG: usize = 3;
 const BLOCK_NORMALIZATION: f64 = 255.0f64;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct FlatBlockFinder {
-    a: [f64; LOW_POLY_NUM_PARAMS * BLOCK_SIZE_SQUARED],
+    a: Box<[f64]>,
     a_t_a_inv: [f64; LOW_POLY_NUM_PARAMS * LOW_POLY_NUM_PARAMS],
 }
 
@@ -28,7 +28,7 @@ impl FlatBlockFinder {
     pub fn new() -> Self {
         let mut eqns = EquationSystem::new(LOW_POLY_NUM_PARAMS);
         let mut a_t_a_inv = [0.0f64; LOW_POLY_NUM_PARAMS * LOW_POLY_NUM_PARAMS];
-        let mut a = [0.0f64; LOW_POLY_NUM_PARAMS * BLOCK_SIZE_SQUARED];
+        let mut a = vec![0.0f64; LOW_POLY_NUM_PARAMS * BLOCK_SIZE_SQUARED];
 
         let bs_half = (BLOCK_SIZE / 2) as f64;
         (0..BLOCK_SIZE).for_each(|y| {
@@ -60,7 +60,10 @@ impl FlatBlockFinder {
             });
         });
 
-        FlatBlockFinder { a, a_t_a_inv }
+        FlatBlockFinder {
+            a: a.into_boxed_slice(),
+            a_t_a_inv,
+        }
     }
 
     // The gradient-based features used in this code are based on:
@@ -315,7 +318,6 @@ impl EquationSystem {
 impl Add<&EquationSystem> for EquationSystem {
     type Output = EquationSystem;
 
-    #[must_use]
     fn add(self, addend: &EquationSystem) -> Self::Output {
         let mut dest = self.clone();
         let n = self.n;
@@ -1141,7 +1143,6 @@ impl StrengthSolver {
 impl Add<&StrengthSolver> for StrengthSolver {
     type Output = StrengthSolver;
 
-    #[must_use]
     fn add(self, addend: &StrengthSolver) -> Self::Output {
         let mut dest = self;
         dest.eqns += &addend.eqns;
