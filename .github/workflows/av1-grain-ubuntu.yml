@@ -139,14 +139,12 @@ jobs:
           # -Zrandomize-layout makes sure not to rely on the layout of anything
           # that might change
           RUSTFLAGS: -Zrandomize-layout
-          # -Zmiri-check-number-validity enables checking of integer and float
-          # validity (e.g., they must be initialized and not carry
-          # pointer provenance) as part of enforcing validity invariants.
-          # -Zmiri-tag-raw-pointers enables a lot of extra UB checks relating
-          # to raw pointer aliasing rules.
+          # -Zmiri-strict-provenance enables strict provenance checking in Miri.
+          # This means that casting an integer to a pointer will stop execution
+          # because the provenance of the pointer cannot be determined.
           # -Zmiri-symbolic-alignment-check makes the alignment check more strict.
           MIRIFLAGS: >
-            -Zmiri-check-number-validity -Zmiri-tag-raw-pointers
+            -Zmiri-strict-provenance
             -Zmiri-symbolic-alignment-check
         run: cargo miri test
 
