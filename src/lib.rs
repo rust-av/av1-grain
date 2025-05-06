@@ -115,6 +115,8 @@ pub use diff::*;
 pub use estimate::*;
 #[cfg(feature = "parse")]
 pub use parse::*;
+
+#[cfg(any(feature = "diff", feature = "estimate"))]
 pub use v_frame;
 
 /// The max number of luma scaling points for grain synthesis

@@ -1,5 +1,7 @@
+#[cfg(feature = "diff")]
 use std::{borrow::Cow, mem::size_of};
 
+#[cfg(feature = "diff")]
 use v_frame::{
     frame::Frame,
     prelude::{CastFromPrimitive, ChromaSampling, Pixel},
