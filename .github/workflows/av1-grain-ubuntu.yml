@@ -22,6 +22,7 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run rustfmt
         uses: actions-rs/cargo@v1
@@ -54,7 +55,7 @@ jobs:
         run: cargo doc --no-deps
 
   code-coverage:
-    needs: [ build-test ]
+    needs: [build-test]
     runs-on: ubuntu-latest
 
     steps:
@@ -75,9 +76,8 @@ jobs:
           files: lcov.log
           fail_ci_if_error: true
 
-
   memory-and-threads-dynamic-analysis:
-    needs: [ build-test ]
+    needs: [build-test]
     runs-on: ubuntu-latest
 
     steps:
@@ -105,7 +105,7 @@ jobs:
           cargo valgrind run -- --help
 
   undefined-behaviour-fuzzy-dynamic-analysis:
-    needs: [ build-test ]
+    needs: [build-test]
     runs-on: ubuntu-latest
 
     steps:
@@ -156,7 +156,7 @@ jobs:
         run: cargo fuzz build
 
   static-code-analysis:
-    needs: [ build-test ]
+    needs: [build-test]
     runs-on: ubuntu-latest
 
     steps:

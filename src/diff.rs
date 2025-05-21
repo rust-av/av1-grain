@@ -70,7 +70,7 @@ impl DiffGenerator {
         verify_dimensions_match(source, denoised)?;
 
         let (flat_blocks, num_flat_blocks) = self.flat_block_finder.run(&source.planes[0]);
-        log::debug!("Num flat blocks: {}", num_flat_blocks);
+        log::debug!("Num flat blocks: {num_flat_blocks}");
 
         log::debug!("Updating noise model");
         let status = self.noise_model.update(source, denoised, &flat_blocks);
