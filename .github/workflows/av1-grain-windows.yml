@@ -28,6 +28,7 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run rustfmt
         uses: actions-rs/cargo@v1
@@ -51,7 +52,7 @@ jobs:
         run: cargo doc --no-deps
 
   static-code-analysis:
-    needs: [ build-test ]
+    needs: [build-test]
     runs-on: windows-latest
 
     steps:
