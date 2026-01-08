@@ -184,11 +184,11 @@ pub(super) fn get_block_mean(
     let max_h = (frame_dims.1 - y_o).min(BLOCK_SIZE);
     let max_w = (frame_dims.0 - x_o).min(BLOCK_SIZE);
 
-    let data_origin = source.data_origin();
+    let data_origin = &source.data()[source.data_origin()..];
     let mut block_sum = 0u64;
     for y in 0..max_h {
         for x in 0..max_w {
-            let index = (y_o + y) * source.cfg.stride + x_o + x;
+            let index = (y_o + y) * source.geometry().stride.get() + x_o + x;
             // SAFETY: We know the index cannot exceed the dimensions of the plane data
             unsafe {
                 block_sum += u64::from(*data_origin.get_unchecked(index));
@@ -212,13 +212,13 @@ pub(super) fn get_noise_var(
     let max_h = (frame_dims.1 - y_o).min(block_h);
     let max_w = (frame_dims.0 - x_o).min(block_w);
 
-    let source_origin = source.data_origin();
-    let denoised_origin = denoised.data_origin();
+    let source_origin = &source.data()[source.data_origin()..];
+    let denoised_origin = &denoised.data()[denoised.data_origin()..];
     let mut noise_var_sum = 0u64;
     let mut noise_sum = 0i64;
     for y in 0..max_h {
         for x in 0..max_w {
-            let index = (y_o + y) * source.cfg.stride + x_o + x;
+            let index = (y_o + y) * source.geometry().stride.get() + x_o + x;
             // SAFETY: We know the index cannot exceed the dimensions of the plane data
             unsafe {
                 let noise = i64::from(*source_origin.get_unchecked(index))
