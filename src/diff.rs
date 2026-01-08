@@ -72,7 +72,7 @@ impl DiffGenerator {
     fn diff_frame_internal(&mut self, source: &Frame<u8>, denoised: &Frame<u8>) -> Result<()> {
         verify_dimensions_match(source, denoised)?;
 
-        let (flat_blocks, num_flat_blocks) = self.flat_block_finder.run(&source.planes[0]);
+        let (flat_blocks, num_flat_blocks) = self.flat_block_finder.run(&source.y_plane);
         log::debug!("Num flat blocks: {num_flat_blocks}");
 
         log::debug!("Updating noise model");
@@ -118,8 +118,8 @@ impl PartialEq for NoiseStatus {
 }
 
 fn verify_dimensions_match(source: &Frame<u8>, denoised: &Frame<u8>) -> Result<()> {
-    let res_1 = (source.planes[0].cfg.width, source.planes[0].cfg.height);
-    let res_2 = (denoised.planes[0].cfg.width, denoised.planes[0].cfg.height);
+    let res_1 = (source.y_plane.width(), source.y_plane.height());
+    let res_2 = (denoised.y_plane.width(), denoised.y_plane.height());
     ensure!(
         res_1 == res_2,
         "Luma resolutions were not equal, {}x{} != {}x{}",
@@ -129,15 +129,21 @@ fn verify_dimensions_match(source: &Frame<u8>, denoised: &Frame<u8>) -> Result<(
         res_2.1
     );
 
-    let res_1 = (source.planes[1].cfg.width, source.planes[1].cfg.height);
-    let res_2 = (denoised.planes[1].cfg.width, denoised.planes[1].cfg.height);
+    let res_1 = (
+        source.u_plane.as_ref().map(|p| p.width().get()),
+        source.u_plane.as_ref().map(|p| p.height().get()),
+    );
+    let res_2 = (
+        denoised.u_plane.as_ref().map(|p| p.width().get()),
+        denoised.u_plane.as_ref().map(|p| p.height().get()),
+    );
     ensure!(
         res_1 == res_2,
         "Chroma resolutions were not equal, {}x{} != {}x{}",
-        res_1.0,
-        res_1.1,
-        res_2.0,
-        res_2.1
+        res_1.0.unwrap_or(0),
+        res_1.1.unwrap_or(0),
+        res_2.0.unwrap_or(0),
+        res_2.1.unwrap_or(0)
     );
 
     Ok(())

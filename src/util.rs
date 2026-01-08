@@ -2,10 +2,7 @@
 use std::{borrow::Cow, mem::size_of};
 
 #[cfg(feature = "diff")]
-use v_frame::{
-    frame::Frame,
-    prelude::{CastFromPrimitive, ChromaSampling, Pixel},
-};
+use v_frame::{frame::Frame, pixel::Pixel};
 
 #[cfg(feature = "diff")]
 pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Frame<u8>> {
@@ -14,26 +11,51 @@ pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Fr
         // SAFETY: We know from the size check that this must be a `Frame<u8>`
         Cow::Borrowed(unsafe { &*(frame as *const Frame<T>).cast::<Frame<u8>>() })
     } else if size_of::<T>() == 2 {
+        use std::num::NonZeroU8;
+
+        use v_frame::{chroma::ChromaSubsampling, frame::FrameBuilder};
+
         assert!(bit_depth > 8 && bit_depth <= 16);
-        let mut u8_frame: Frame<u8> = Frame::new_with_padding(
-            frame.planes[0].cfg.width,
-            frame.planes[0].cfg.height,
-            match frame.planes[1].cfg.xdec + frame.planes[1].cfg.ydec {
-                0 => ChromaSampling::Cs444,
-                1 => ChromaSampling::Cs422,
-                2 => ChromaSampling::Cs420,
+        let mut u8_frame: Frame<u8> = FrameBuilder::new(
+            frame.y_plane.width(),
+            frame.y_plane.height(),
+            frame.subsampling,
+            NonZeroU8::new(8).expect("non-zero constant"),
+        )
+        .build()
+        .expect("frame should build");
+        for plane in 0..(if frame.subsampling == ChromaSubsampling::Monochrome {
+            1
+        } else {
+            3
+        }) {
+            let in_plane = match plane {
+                0 => &frame.y_plane,
+                1 => frame
+                    .u_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                2 => frame
+                    .v_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
                 _ => unreachable!(),
-            },
-            frame.planes[0].cfg.xpad,
-        );
-        for i in 0..3 {
-            let out_plane = &mut u8_frame.planes[i];
-            for (i, o) in frame.planes[i]
-                .data_origin()
-                .iter()
-                .zip(out_plane.data_origin_mut().iter_mut())
-            {
-                *o = (u16::cast_from(*i) >> (bit_depth - 8usize)) as u8;
+            };
+            let out_plane = match plane {
+                0 => &mut u8_frame.y_plane,
+                1 => u8_frame
+                    .u_plane
+                    .as_mut()
+                    .expect("unreachable due to loop bounds"),
+                2 => u8_frame
+                    .v_plane
+                    .as_mut()
+                    .expect("unreachable due to loop bounds"),
+                _ => unreachable!(),
+            };
+
+            for (i, o) in in_plane.pixels().zip(out_plane.pixels_mut()) {
+                *o = (i.to_u16().expect("i fits in u16") >> (bit_depth - 8usize)) as u8;
             }
         }
         Cow::Owned(u8_frame)

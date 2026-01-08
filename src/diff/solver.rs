@@ -4,7 +4,7 @@ use std::ops::{Add, AddAssign};
 
 use anyhow::anyhow;
 use arrayvec::ArrayVec;
-use v_frame::{frame::Frame, math::clamp, plane::Plane};
+use v_frame::{chroma::ChromaSubsampling, frame::Frame, plane::Plane};
 
 use self::util::{extract_ar_row, get_block_mean, get_noise_var, linsolve, multiply_mat};
 use super::{NoiseStatus, BLOCK_SIZE, BLOCK_SIZE_SQUARED};
@@ -89,8 +89,8 @@ impl FlatBlockFinder {
         const NORM_WEIGHT: f64 = -12434f64;
         const OFFSET: f64 = 2.5694f64;
 
-        let num_blocks_w = plane.cfg.width.div_ceil(BLOCK_SIZE);
-        let num_blocks_h = plane.cfg.height.div_ceil(BLOCK_SIZE);
+        let num_blocks_w = plane.width().get().div_ceil(BLOCK_SIZE);
+        let num_blocks_h = plane.height().get().div_ceil(BLOCK_SIZE);
         let num_blocks = num_blocks_w * num_blocks_h;
         let mut flat_blocks = vec![0u8; num_blocks];
         let mut num_flat = 0;
@@ -145,7 +145,7 @@ impl FlatBlockFinder {
                 let trace = gxx + gyy;
                 let det = gxx.mul_add(gyy, -gxy.powi(2));
                 let e_sub = (trace.mul_add(trace, -4f64 * det)).max(0.).sqrt();
-                let e1 = (trace + e_sub) / 2.0f64;
+                let e1 = f64::midpoint(trace, e_sub);
                 let e2 = (trace - e_sub) / 2.0f64;
                 // Spectral norm
                 let norm = e1;
@@ -163,7 +163,7 @@ impl FlatBlockFinder {
                     ),
                 );
                 // clamp the value to [-25.0, 100.0] to prevent overflow
-                let sum_weights = clamp(sum_weights, -25.0f64, 100.0f64);
+                let sum_weights = sum_weights.clamp(-25.0f64, 100.0f64);
                 let score = (1.0f64 / (1.0f64 + (-sum_weights).exp())) as f32;
                 // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
                 unsafe {
@@ -209,18 +209,18 @@ impl FlatBlockFinder {
     ) {
         let mut plane_coords = [0f64; LOW_POLY_NUM_PARAMS];
         let mut a_t_a_inv_b = [0f64; LOW_POLY_NUM_PARAMS];
-        let plane_origin = plane.data_origin();
+        let plane_origin = &plane.data()[plane.data_origin()..];
 
         for yi in 0..BLOCK_SIZE {
-            let y = clamp(offset_y + yi, 0, plane.cfg.height - 1);
+            let y = offset_y + yi.clamp(0, plane.height().get() - 1);
             for xi in 0..BLOCK_SIZE {
-                let x = clamp(offset_x + xi, 0, plane.cfg.width - 1);
+                let x = offset_x + xi.clamp(0, plane.width().get() - 1);
                 // SAFETY: We know the bounds of the plane data and `block_result`
                 // and do not exceed them.
                 unsafe {
-                    *block_result.get_unchecked_mut(yi * BLOCK_SIZE + xi) =
-                        f64::from(*plane_origin.get_unchecked(y * plane.cfg.stride + x))
-                            / BLOCK_NORMALIZATION;
+                    *block_result.get_unchecked_mut(yi * BLOCK_SIZE + xi) = f64::from(
+                        *plane_origin.get_unchecked(y * plane.geometry().stride.get() + x),
+                    ) / BLOCK_NORMALIZATION;
                 }
             }
         }
@@ -405,8 +405,8 @@ impl NoiseModel {
         denoised: &Frame<u8>,
         flat_blocks: &[u8],
     ) -> NoiseStatus {
-        let num_blocks_w = source.planes[0].cfg.width.div_ceil(BLOCK_SIZE);
-        let num_blocks_h = source.planes[0].cfg.height.div_ceil(BLOCK_SIZE);
+        let num_blocks_w = source.y_plane.width().get().div_ceil(BLOCK_SIZE);
+        let num_blocks_h = source.y_plane.height().get().div_ceil(BLOCK_SIZE);
         let mut y_model_different = false;
 
         // Clear the latest equation system
@@ -422,19 +422,43 @@ impl NoiseModel {
             return NoiseStatus::Error(anyhow!("Not enough flat blocks to update noise estimate"));
         }
 
-        let frame_dims = (source.planes[0].cfg.width, source.planes[0].cfg.height);
-        for channel in 0..3 {
-            if source.planes[channel].data.is_empty() {
-                // Monochrome source
-                break;
-            }
+        let frame_dims = (source.y_plane.width().get(), source.y_plane.height().get());
+        for channel in 0..(if source.subsampling == ChromaSubsampling::Monochrome {
+            1
+        } else {
+            3
+        }) {
+            let source_plane = match channel {
+                0 => &source.y_plane,
+                1 => source
+                    .u_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                2 => source
+                    .v_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                _ => unreachable!(),
+            };
+            let denoised_plane = match channel {
+                0 => &denoised.y_plane,
+                1 => denoised
+                    .u_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                2 => denoised
+                    .v_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                _ => unreachable!(),
+            };
             let is_chroma = channel > 0;
-            let alt_source = (channel > 0).then(|| &source.planes[0]);
-            let alt_denoised = (channel > 0).then(|| &denoised.planes[0]);
+            let alt_source = (channel > 0).then_some(&source.y_plane);
+            let alt_denoised = (channel > 0).then_some(&denoised.y_plane);
             self.add_block_observations(
                 channel,
-                &source.planes[channel],
-                &denoised.planes[channel],
+                source_plane,
+                denoised_plane,
                 alt_source,
                 alt_denoised,
                 frame_dims,
@@ -456,8 +480,8 @@ impl NoiseModel {
             }
             self.add_noise_std_observations(
                 channel,
-                &source.planes[channel],
-                &denoised.planes[channel],
+                source_plane,
+                denoised_plane,
                 alt_source,
                 frame_dims,
                 flat_blocks,
@@ -548,12 +572,12 @@ impl NoiseModel {
 
         // Scaling_shift values are in the range [8,11]
         let max_scaling_value_log2 =
-            clamp((max_scaling_value.log2() + 1f64).floor() as u8, 2u8, 5u8);
+            ((max_scaling_value.log2() + 1f64).floor() as u8).clamp(2u8, 5u8);
         let scale_factor = f64::from(1u32 << (8u8 - max_scaling_value_log2));
         let map_scaling_point = |p: [f64; 2]| {
             [
                 (p[0] + 0.5f64) as u8,
-                clamp(scale_factor.mul_add(p[1], 0.5f64) as i32, 0i32, 255i32) as u8,
+                (scale_factor.mul_add(p[1], 0.5f64) as i32).clamp(0i32, 255i32) as u8,
             ]
         };
 
@@ -618,11 +642,9 @@ impl NoiseModel {
 
         // Shift value: AR coeffs range (values 6-9)
         // 6: [-2, 2),  7: [-1, 1), 8: [-0.5, 0.5), 9: [-0.25, 0.25)
-        let ar_coeff_shift = clamp(
-            7i32 - (1.0f64 + max_coeff.log2().floor()).max((-min_coeff).log2().ceil()) as i32,
-            6i32,
-            9i32,
-        ) as u8;
+        let ar_coeff_shift = (7i32
+            - (1.0f64 + max_coeff.log2().floor()).max((-min_coeff).log2().ceil()) as i32)
+            .clamp(6i32, 9i32) as u8;
         let scale_ar_coeff = f64::from(1u16 << ar_coeff_shift);
         let ar_coeffs_y = self.get_ar_coeffs_y(n_coeff, scale_ar_coeff);
         let ar_coeffs_cb = self.get_ar_coeffs_uv(1, n_coeff, scale_ar_coeff, y_corr);
@@ -683,7 +705,7 @@ impl NoiseModel {
         let mut coeffs = ArrayVec::new();
         let eqns = &self.combined_state[0].eqns;
         for i in 0..n_coeff {
-            coeffs.push(clamp((scale_ar_coeff * eqns.x[i]).round() as i32, -128i32, 127i32) as i8);
+            coeffs.push(((scale_ar_coeff * eqns.x[i]).round() as i32).clamp(-128i32, 127i32) as i8);
         }
         coeffs
     }
@@ -700,13 +722,11 @@ impl NoiseModel {
         let mut coeffs = ArrayVec::new();
         let eqns = &self.combined_state[channel].eqns;
         for i in 0..n_coeff {
-            coeffs.push(clamp((scale_ar_coeff * eqns.x[i]).round() as i32, -128i32, 127i32) as i8);
+            coeffs.push(((scale_ar_coeff * eqns.x[i]).round() as i32).clamp(-128i32, 127i32) as i8);
         }
-        coeffs.push(clamp(
-            (scale_ar_coeff * y_corr[channel - 1]).round() as i32,
-            -128i32,
-            127i32,
-        ) as i8);
+        coeffs.push(
+            ((scale_ar_coeff * y_corr[channel - 1]).round() as i32).clamp(-128i32, 127i32) as i8,
+        );
         coeffs
     }
 
@@ -763,16 +783,19 @@ impl NoiseModel {
         let b = &mut state.eqns.b;
         let mut buffer = vec![0f64; num_coords + 1].into_boxed_slice();
         let n = state.eqns.n;
-        let block_w = BLOCK_SIZE >> source.cfg.xdec;
-        let block_h = BLOCK_SIZE >> source.cfg.ydec;
+        let block_w = BLOCK_SIZE / source.geometry().subsampling_x.get() as usize;
+        let block_h = BLOCK_SIZE / source.geometry().subsampling_y.get() as usize;
 
-        let dec = (source.cfg.xdec, source.cfg.ydec);
-        let stride = source.cfg.stride;
-        let source_origin = source.data_origin();
-        let denoised_origin = denoised.data_origin();
-        let alt_stride = alt_source.map_or(0, |s| s.cfg.stride);
-        let alt_source_origin = alt_source.map(|s| s.data_origin());
-        let alt_denoised_origin = alt_denoised.map(|s| s.data_origin());
+        let dec = (
+            source.geometry().subsampling_x.get() as usize >> 1,
+            source.geometry().subsampling_y.get() as usize >> 1,
+        );
+        let stride = source.geometry().stride.get();
+        let source_origin = &source.data()[source.data_origin()..];
+        let denoised_origin = &denoised.data()[denoised.data_origin()..];
+        let alt_stride = alt_source.map_or(0, |s| s.geometry().stride.get());
+        let alt_source_origin = alt_source.map(|s| &s.data()[s.data_origin()..]);
+        let alt_denoised_origin = alt_denoised.map(|s| &s.data()[s.data_origin()..]);
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
@@ -851,8 +874,8 @@ impl NoiseModel {
         let num_coords = self.n;
         let luma_gain = self.latest_state[0].ar_gain;
         let noise_gain = self.latest_state[channel].ar_gain;
-        let block_w = BLOCK_SIZE >> source.cfg.xdec;
-        let block_h = BLOCK_SIZE >> source.cfg.ydec;
+        let block_w = BLOCK_SIZE / source.geometry().subsampling_x.get() as usize;
+        let block_h = BLOCK_SIZE / source.geometry().subsampling_y.get() as usize;
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
@@ -861,23 +884,29 @@ impl NoiseModel {
                 if flat_blocks[by * num_blocks_w + bx] == 0 {
                     continue;
                 }
-                let num_samples_h = ((frame_dims.1 >> source.cfg.ydec) - by * block_h).min(block_h);
-                let num_samples_w = ((frame_dims.0 >> source.cfg.xdec) - bx * block_w).min(block_w);
+                let num_samples_h = ((frame_dims.1
+                    / source.geometry().subsampling_y.get() as usize)
+                    - by * block_h)
+                    .min(block_h);
+                let num_samples_w = ((frame_dims.0
+                    / source.geometry().subsampling_x.get() as usize)
+                    - bx * block_w)
+                    .min(block_w);
                 // Make sure that we have a reasonable amount of samples to consider the
                 // block
                 if num_samples_w * num_samples_h > BLOCK_SIZE {
                     let block_mean = get_block_mean(
                         alt_source.unwrap_or(source),
                         frame_dims,
-                        x_o << source.cfg.xdec,
-                        y_o << source.cfg.ydec,
+                        x_o << (source.geometry().subsampling_x.get() >> 1),
+                        y_o << (source.geometry().subsampling_y.get() >> 1),
                     );
                     let noise_var = get_noise_var(
                         source,
                         denoised,
                         (
-                            frame_dims.0 >> source.cfg.xdec,
-                            frame_dims.1 >> source.cfg.ydec,
+                            frame_dims.0 >> (source.geometry().subsampling_x.get() >> 1),
+                            frame_dims.1 >> (source.geometry().subsampling_y.get() >> 1),
                         ),
                         x_o,
                         y_o,
@@ -1099,7 +1128,7 @@ impl StrengthSolver {
     #[must_use]
     fn get_bin_index(&self, value: f64) -> f64 {
         let max = 255f64;
-        let val = clamp(value, 0f64, max);
+        let val = value.clamp(0f64, max);
         (self.num_bins - 1) as f64 * val / max
     }
 
