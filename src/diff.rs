@@ -1,9 +1,9 @@
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use num_rational::Rational64;
 use v_frame::{frame::Frame, pixel::Pixel};
 
 use self::solver::{FlatBlockFinder, NoiseModel};
-use crate::{util::frame_into_u8, GrainTableSegment};
+use crate::{GrainTableSegment, util::frame_into_u8};
 
 mod solver;
 

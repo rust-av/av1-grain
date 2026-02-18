@@ -74,7 +74,7 @@ use std::{
 
 use arrayvec::ArrayVec;
 
-use crate::{GrainTableSegment, ScalingPoints, DEFAULT_GRAIN_SEED, NUM_Y_POINTS};
+use crate::{DEFAULT_GRAIN_SEED, GrainTableSegment, NUM_Y_POINTS, ScalingPoints};
 
 const PQ_M1: f32 = 2610. / 16384.;
 const PQ_M2: f32 = 128. * 2523. / 4096.;

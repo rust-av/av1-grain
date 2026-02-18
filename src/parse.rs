@@ -9,6 +9,7 @@
 
 use arrayvec::ArrayVec;
 use nom::{
+    AsChar, Compare, Err as NomErr, IResult, Input, Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1, line_ending, multispace0, multispace1, space0, space1},
@@ -16,7 +17,6 @@ use nom::{
     error::{Error as NomError, ErrorKind, FromExternalError, ParseError},
     multi::{many1, separated_list0, separated_list1},
     sequence::{delimited, preceded},
-    AsChar, Compare, Err as NomErr, IResult, Input, Parser,
 };
 
 use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS};

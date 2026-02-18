@@ -9,6 +9,7 @@
 
 - Improve limited range photon noise generation.
   - [Breaking] Introduces a `full_range` field on `NoiseGenArgs`
+- Bump to Rust edition 2024
 
 ## Version 0.3.0
 

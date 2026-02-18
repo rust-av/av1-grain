@@ -7,10 +7,10 @@ use arrayvec::ArrayVec;
 use v_frame::{chroma::ChromaSubsampling, frame::Frame, plane::Plane};
 
 use self::util::{extract_ar_row, get_block_mean, get_noise_var, linsolve, multiply_mat};
-use super::{NoiseStatus, BLOCK_SIZE, BLOCK_SIZE_SQUARED};
+use super::{BLOCK_SIZE, BLOCK_SIZE_SQUARED, NoiseStatus};
 use crate::{
-    diff::solver::util::normalized_cross_correlation, GrainTableSegment, DEFAULT_GRAIN_SEED,
-    NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS,
+    DEFAULT_GRAIN_SEED, GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS,
+    NUM_Y_POINTS, diff::solver::util::normalized_cross_correlation,
 };
 
 const LOW_POLY_NUM_PARAMS: usize = 3;
