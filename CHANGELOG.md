@@ -5,6 +5,11 @@
 - [Feature] Add a new function, `generate_film_grain_params`. This works like `generate_photon_noise_params` but generates more coarse, film-like grain.
 - [Feature] Add the `estimate` module which contains the `estimate_plane_noise` function. This takes in a series of frames and estimates the amount of noise for each of them. This feature is enabled by default. -->
 
+## Version 0.4.0
+
+- Improve limited range photon noise generation.
+  - [Breaking] Introduces a `full_range` field on `NoiseGenArgs`
+
 ## Version 0.3.0
 
 - [Breaking] Update `v_frame` dependency to 0.5

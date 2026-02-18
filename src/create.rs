@@ -119,6 +119,8 @@ pub struct NoiseGenArgs {
     pub width: u32,
     pub height: u32,
     pub transfer_function: TransferFunction,
+    /// Whether the input is full range or limited range
+    pub full_range: bool,
     pub chroma_grain: bool,
     pub random_seed: Option<u16>,
 }
@@ -376,6 +378,10 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
         * pixel_area_microns;
     let max_electrons_per_pixel = mid_tone_electrons_per_pixel / args.transfer_function.mid_tone();
 
+    let max_value = if args.full_range { 255 } else { 235 };
+    let min_value = if args.full_range { 0 } else { 16 };
+    let range = max_value - min_value;
+
     let mut scaling_points = ScalingPoints::default();
     for i in 0..NUM_Y_POINTS {
         let x = i as f32 / (NUM_Y_POINTS as f32 - 1.);
@@ -403,8 +409,9 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
             / (linear_range_end - linear_range_start);
         let encoded_noise = linear_noise * tf_slope;
 
-        let x = (255. * x).round() as u8;
-        let encoded_noise = 255_f32.min((255. * 7.88 * encoded_noise).round()) as u8;
+        // min_value as f32 + range as f32 * x
+        let x = (range as f32).mul_add(x, min_value as f32).round() as u8;
+        let encoded_noise = (range as f32).min((range as f32 * 7.88 * encoded_noise).round()) as u8;
 
         scaling_points.push([x, encoded_noise]);
     }
