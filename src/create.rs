@@ -381,10 +381,26 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
     let max_value = if args.full_range { 255 } else { 235 };
     let min_value = if args.full_range { 0 } else { 16 };
     let range = max_value - min_value;
+    const RAMP_OFFSET: usize = 3;
+    const MIN_EDGE: usize = 0;
+    const MAX_EDGE: usize = NUM_Y_POINTS - 1;
 
     let mut scaling_points = ScalingPoints::default();
     for i in 0..NUM_Y_POINTS {
-        let x = i as f32 / (NUM_Y_POINTS as f32 - 1.);
+        // Applying photon noise "as is" results in unwanted brightening of darkest and darkening of brightest luma values;
+        // clamping scaling points to a maximum of 1 at those min and max values prevents that.
+        let x = if i == MIN_EDGE {
+            0.0
+        } else if i == MAX_EDGE {
+            1.0
+        } else {
+            // (ramp_offset + (range - 2 * ramp_offset) * ((i - 1) / (film_grain->num_y_points - 3.0))) / range
+            ((range - 2 * RAMP_OFFSET) as f32).mul_add(
+                (i - 1) as f32 / (NUM_Y_POINTS - 3) as f32,
+                RAMP_OFFSET as f32,
+            ) / range as f32
+        };
+
         let linear = args.transfer_function.to_linear(x);
         let electrons_per_pixel = max_electrons_per_pixel * linear;
 
@@ -411,7 +427,11 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
 
         // min_value as f32 + range as f32 * x
         let x = (range as f32).mul_add(x, min_value as f32).round() as u8;
-        let encoded_noise = (range as f32).min((range as f32 * 7.88 * encoded_noise).round()) as u8;
+        let mut encoded_noise =
+            (range as f32).min((range as f32 * 7.88 * encoded_noise).round()) as u8;
+        if i == MIN_EDGE || i == MAX_EDGE {
+            encoded_noise = if encoded_noise >= 1 { 1 } else { 0 };
+        }
 
         scaling_points.push([x, encoded_noise]);
     }
