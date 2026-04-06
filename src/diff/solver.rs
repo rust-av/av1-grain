@@ -10,7 +10,9 @@ use self::util::{extract_ar_row, get_block_mean, get_noise_var, linsolve, multip
 use super::{BLOCK_SIZE, BLOCK_SIZE_SQUARED, NoiseStatus};
 use crate::{
     DEFAULT_GRAIN_SEED, GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS,
-    NUM_Y_POINTS, diff::solver::util::normalized_cross_correlation,
+    NUM_Y_POINTS,
+    diff::solver::util::normalized_cross_correlation,
+    util::{get_dbg, get_dbg_mut},
 };
 
 const LOW_POLY_NUM_PARAMS: usize = 3;
@@ -37,13 +39,14 @@ impl FlatBlockFinder {
                 let xd = (x as f64 - bs_half) / bs_half;
                 let coords = [yd, xd, 1.0f64];
                 let row = y * BLOCK_SIZE + x;
-                a[LOW_POLY_NUM_PARAMS * row] = yd;
-                a[LOW_POLY_NUM_PARAMS * row + 1] = xd;
-                a[LOW_POLY_NUM_PARAMS * row + 2] = 1.0f64;
+                *get_dbg_mut(&mut a, LOW_POLY_NUM_PARAMS * row) = yd;
+                *get_dbg_mut(&mut a, LOW_POLY_NUM_PARAMS * row + 1) = xd;
+                *get_dbg_mut(&mut a, LOW_POLY_NUM_PARAMS * row + 2) = 1.0f64;
 
                 (0..LOW_POLY_NUM_PARAMS).for_each(|i| {
                     (0..LOW_POLY_NUM_PARAMS).for_each(|j| {
-                        eqns.a[LOW_POLY_NUM_PARAMS * i + j] += coords[i] * coords[j];
+                        *get_dbg_mut(&mut eqns.a, LOW_POLY_NUM_PARAMS * i + j) +=
+                            *get_dbg(&coords, i) * *get_dbg(&coords, j);
                     });
                 });
             });
@@ -52,11 +55,11 @@ impl FlatBlockFinder {
         // Lazy inverse using existing equation solver.
         (0..LOW_POLY_NUM_PARAMS).for_each(|i| {
             eqns.b.fill(0.0f64);
-            eqns.b[i] = 1.0f64;
+            *get_dbg_mut(&mut eqns.b, i) = 1.0f64;
             eqns.solve();
 
             (0..LOW_POLY_NUM_PARAMS).for_each(|j| {
-                a_t_a_inv[j * LOW_POLY_NUM_PARAMS + i] = eqns.x[j];
+                *get_dbg_mut(&mut a_t_a_inv, j * LOW_POLY_NUM_PARAMS + i) = *get_dbg(&eqns.x, j);
             });
         });
 
@@ -165,15 +168,12 @@ impl FlatBlockFinder {
                 // clamp the value to [-25.0, 100.0] to prevent overflow
                 let sum_weights = sum_weights.clamp(-25.0f64, 100.0f64);
                 let score = (1.0f64 / (1.0f64 + (-sum_weights).exp())) as f32;
-                // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
-                unsafe {
-                    let index = by * num_blocks_w + bx;
-                    *flat_blocks.get_unchecked_mut(index) = if is_flat { 255 } else { 0 };
-                    *scores.get_unchecked_mut(index) = IndexAndScore {
-                        score: if var > VAR_THRESHOLD { score } else { 0f32 },
-                        index,
-                    };
-                }
+                let index = by * num_blocks_w + bx;
+                *get_dbg_mut(&mut flat_blocks, index) = if is_flat { 255 } else { 0 };
+                *get_dbg_mut(&mut scores, index) = IndexAndScore {
+                    score: if var > VAR_THRESHOLD { score } else { 0f32 },
+                    index,
+                };
                 if is_flat {
                     num_flat += 1;
                 }
@@ -181,18 +181,16 @@ impl FlatBlockFinder {
         }
 
         scores.sort_unstable_by(|a, b| a.score.partial_cmp(&b.score).expect("Shouldn't be NaN"));
-        // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
-        unsafe {
-            let top_nth_percentile = num_blocks * 90 / 100;
-            let score_threshold = scores.get_unchecked(top_nth_percentile).score;
-            for score in &scores {
-                if score.score >= score_threshold {
-                    let block_ref = flat_blocks.get_unchecked_mut(score.index);
-                    if *block_ref == 0 {
-                        num_flat += 1;
-                    }
-                    *block_ref |= 1;
+
+        let top_nth_percentile = num_blocks * 90 / 100;
+        let score_threshold = get_dbg(&scores, top_nth_percentile).score;
+        for score in &scores {
+            if score.score >= score_threshold {
+                let block_ref = get_dbg_mut(&mut flat_blocks, score.index);
+                if *block_ref == 0 {
+                    num_flat += 1;
                 }
+                *block_ref |= 1;
             }
         }
 
@@ -209,19 +207,16 @@ impl FlatBlockFinder {
     ) {
         let mut plane_coords = [0f64; LOW_POLY_NUM_PARAMS];
         let mut a_t_a_inv_b = [0f64; LOW_POLY_NUM_PARAMS];
-        let plane_origin = &plane.data()[plane.data_origin()..];
+        let plane_origin = get_dbg(plane.data(), plane.data_origin()..);
 
         for yi in 0..BLOCK_SIZE {
             let y = (offset_y + yi).clamp(0, plane.height().get() - 1);
             for xi in 0..BLOCK_SIZE {
                 let x = (offset_x + xi).clamp(0, plane.width().get() - 1);
-                // SAFETY: We know the bounds of the plane data and `block_result`
-                // and do not exceed them.
-                unsafe {
-                    *block_result.get_unchecked_mut(yi * BLOCK_SIZE + xi) = f64::from(
-                        *plane_origin.get_unchecked(y * plane.geometry().stride.get() + x),
-                    ) / BLOCK_NORMALIZATION;
-                }
+                *get_dbg_mut(block_result, yi * BLOCK_SIZE + xi) = f64::from(*get_dbg(
+                    plane_origin,
+                    y * plane.geometry().stride.get() + x,
+                )) / BLOCK_NORMALIZATION;
             }
         }
 
@@ -296,8 +291,9 @@ impl EquationSystem {
         // Set all of the AR coefficients to zero, but try to solve for correlation
         // with the luma channel
         self.x.fill(0f64);
-        if self.a[last * self.n + last].abs() > TOLERANCE {
-            self.x[last] = self.b[last] / self.a[last * self.n + last];
+        if get_dbg(&self.a, last * self.n + last).abs() > TOLERANCE {
+            *get_dbg_mut(&mut self.x, last) =
+                *get_dbg(&self.b, last) / *get_dbg(&self.a, last * self.n + last);
         }
     }
 
@@ -323,9 +319,9 @@ impl Add<&EquationSystem> for EquationSystem {
         let n = self.n;
         for i in 0..n {
             for j in 0..n {
-                dest.a[i * n + j] += addend.a[i * n + j];
+                *get_dbg_mut(&mut dest.a, i * n + j) += *get_dbg(&addend.a, i * n + j);
             }
-            dest.b[i] += addend.b[i];
+            *get_dbg_mut(&mut dest.b, i) += *get_dbg(&addend.b, i);
         }
         dest
     }
@@ -411,9 +407,10 @@ impl NoiseModel {
 
         // Clear the latest equation system
         for i in 0..3 {
-            self.latest_state[i].eqns.clear();
-            self.latest_state[i].num_observations = 0;
-            self.latest_state[i].strength_solver.clear();
+            let state = get_dbg_mut(&mut self.latest_state, i);
+            state.eqns.clear();
+            state.num_observations = 0;
+            state.strength_solver.clear();
         }
 
         // Check that we have enough flat blocks
@@ -466,9 +463,10 @@ impl NoiseModel {
                 num_blocks_w,
                 num_blocks_h,
             );
-            if !self.latest_state[channel].ar_equation_system_solve(is_chroma) {
+
+            if !get_dbg_mut(&mut self.latest_state, channel).ar_equation_system_solve(is_chroma) {
                 if is_chroma {
-                    self.latest_state[channel]
+                    get_dbg_mut(&mut self.latest_state, channel)
                         .eqns
                         .set_chroma_coefficient_fallback_solution();
                 } else {
@@ -488,17 +486,19 @@ impl NoiseModel {
                 num_blocks_w,
                 num_blocks_h,
             );
-            if !self.latest_state[channel].strength_solver.solve() {
+            if !get_dbg_mut(&mut self.latest_state, channel)
+                .strength_solver
+                .solve()
+            {
                 return NoiseStatus::Error(anyhow!(
                     "Failed to solve strength solver for latest state"
                 ));
             }
 
             // Check noise characteristics and return if error
-            if channel == 0
-                && self.combined_state[channel].strength_solver.num_equations > 0
-                && self.is_different()
-            {
+            let is_different = self.is_different();
+            let combined_state = get_dbg_mut(&mut self.combined_state, channel);
+            if channel == 0 && combined_state.strength_solver.num_equations > 0 && is_different {
                 y_model_different = true;
             }
 
@@ -506,12 +506,12 @@ impl NoiseModel {
                 continue;
             }
 
-            self.combined_state[channel].num_observations +=
-                self.latest_state[channel].num_observations;
-            self.combined_state[channel].eqns += &self.latest_state[channel].eqns;
-            if !self.combined_state[channel].ar_equation_system_solve(is_chroma) {
+            combined_state.num_observations +=
+                get_dbg(&self.latest_state, channel).num_observations;
+            combined_state.eqns += &get_dbg(&self.latest_state, channel).eqns;
+            if !combined_state.ar_equation_system_solve(is_chroma) {
                 if is_chroma {
-                    self.combined_state[channel]
+                    combined_state
                         .eqns
                         .set_chroma_coefficient_fallback_solution();
                 } else {
@@ -522,10 +522,9 @@ impl NoiseModel {
                 }
             }
 
-            self.combined_state[channel].strength_solver +=
-                &self.latest_state[channel].strength_solver;
+            combined_state.strength_solver += &get_dbg(&self.latest_state, channel).strength_solver;
 
-            if !self.combined_state[channel].strength_solver.solve() {
+            if !combined_state.strength_solver.solve() {
                 return NoiseStatus::Error(anyhow!(
                     "Failed to solve strength solver for combined state"
                 ));
@@ -601,29 +600,30 @@ impl NoiseModel {
         let mut y_corr = [0f64; 2];
         let mut avg_luma_strength = 0f64;
         for c in 0..3 {
-            let eqns = &self.combined_state[c].eqns;
+            let eqns = &get_dbg(&self.combined_state, c).eqns;
             for i in 0..n_coeff {
-                if eqns.x[i] > max_coeff {
-                    max_coeff = eqns.x[i];
+                let xi = *get_dbg(&eqns.x, i);
+                if xi > max_coeff {
+                    max_coeff = xi;
                 }
-                if eqns.x[i] < min_coeff {
-                    min_coeff = eqns.x[i];
+                if xi < min_coeff {
+                    min_coeff = xi;
                 }
             }
 
             // Since the correlation between luma/chroma was computed in an already
             // scaled space, we adjust it in the un-scaled space.
-            let solver = &self.combined_state[c].strength_solver;
+            let solver = &get_dbg(&self.combined_state, c).strength_solver;
             // Compute a weighted average of the strength for the channel.
             let mut average_strength = 0f64;
             let mut total_weight = 0f64;
             for i in 0..solver.eqns.n {
                 let mut w = 0f64;
                 for j in 0..solver.eqns.n {
-                    w += solver.eqns.a[i * solver.eqns.n + j];
+                    w += *get_dbg(&solver.eqns.a, i * solver.eqns.n + j);
                 }
                 w = w.sqrt();
-                average_strength += solver.eqns.x[i] * w;
+                average_strength += *get_dbg(&solver.eqns.x, i) * w;
                 total_weight += w;
             }
             if total_weight.abs() < f64::EPSILON {
@@ -634,9 +634,10 @@ impl NoiseModel {
             if c == 0 {
                 avg_luma_strength = average_strength;
             } else {
-                y_corr[c - 1] = avg_luma_strength * eqns.x[n_coeff] / average_strength;
-                max_coeff = max_coeff.max(y_corr[c - 1]);
-                min_coeff = min_coeff.min(y_corr[c - 1]);
+                let y_corr_cur = get_dbg_mut(&mut y_corr, c - 1);
+                *y_corr_cur = avg_luma_strength * *get_dbg(&eqns.x, n_coeff) / average_strength;
+                max_coeff = max_coeff.max(*y_corr_cur);
+                min_coeff = min_coeff.min(*y_corr_cur);
             }
         }
 
@@ -679,8 +680,8 @@ impl NoiseModel {
 
     pub fn save_latest(&mut self) {
         for c in 0..3 {
-            let latest_state = &self.latest_state[c];
-            let combined_state = &mut self.combined_state[c];
+            let latest_state = get_dbg(&self.latest_state, c);
+            let combined_state = get_dbg_mut(&mut self.combined_state, c);
             combined_state.eqns.copy_from(&latest_state.eqns);
             combined_state
                 .strength_solver
@@ -705,7 +706,8 @@ impl NoiseModel {
         let mut coeffs = ArrayVec::new();
         let eqns = &self.combined_state[0].eqns;
         for i in 0..n_coeff {
-            coeffs.push(((scale_ar_coeff * eqns.x[i]).round() as i32).clamp(-128i32, 127i32) as i8);
+            let xi = *get_dbg(&eqns.x, i);
+            coeffs.push(((scale_ar_coeff * xi).round() as i32).clamp(-128i32, 127i32) as i8);
         }
         coeffs
     }
@@ -720,12 +722,14 @@ impl NoiseModel {
     ) -> ArrayVec<i8, NUM_UV_COEFFS> {
         assert!(n_coeff <= NUM_Y_COEFFS);
         let mut coeffs = ArrayVec::new();
-        let eqns = &self.combined_state[channel].eqns;
+        let eqns = &get_dbg(&self.combined_state, channel).eqns;
         for i in 0..n_coeff {
-            coeffs.push(((scale_ar_coeff * eqns.x[i]).round() as i32).clamp(-128i32, 127i32) as i8);
+            let xi = *get_dbg(&eqns.x, i);
+            coeffs.push(((scale_ar_coeff * xi).round() as i32).clamp(-128i32, 127i32) as i8);
         }
         coeffs.push(
-            ((scale_ar_coeff * y_corr[channel - 1]).round() as i32).clamp(-128i32, 127i32) as i8,
+            ((scale_ar_coeff * *get_dbg(&y_corr, channel - 1)).round() as i32)
+                .clamp(-128i32, 127i32) as i8,
         );
         coeffs
     }
@@ -754,10 +758,10 @@ impl NoiseModel {
         for j in 0..latest_eqns.n {
             let mut weight = 0.0f64;
             for i in 0..latest_eqns.n {
-                weight += latest_eqns.a[i * latest_eqns.n + j];
+                weight += *get_dbg(&latest_eqns.a, i * latest_eqns.n + j);
             }
             weight = weight.sqrt();
-            diff += weight * (latest_eqns.x[j] - combined_eqns.x[j]).abs();
+            diff += weight * (*get_dbg(&latest_eqns.x, j) - *get_dbg(&combined_eqns.x, j)).abs();
             total_weight += weight;
         }
 
@@ -778,7 +782,7 @@ impl NoiseModel {
         num_blocks_h: usize,
     ) {
         let num_coords = self.n;
-        let state = &mut self.latest_state[channel];
+        let state = get_dbg_mut(&mut self.latest_state, channel);
         let a = &mut state.eqns.a;
         let b = &mut state.eqns.b;
         let mut buffer = vec![0f64; num_coords + 1].into_boxed_slice();
@@ -791,11 +795,11 @@ impl NoiseModel {
             source.geometry().subsampling_y.get() as usize >> 1,
         );
         let stride = source.geometry().stride.get();
-        let source_origin = &source.data()[source.data_origin()..];
-        let denoised_origin = &denoised.data()[denoised.data_origin()..];
+        let source_origin = get_dbg(source.data(), source.data_origin()..);
+        let denoised_origin = get_dbg(denoised.data(), denoised.data_origin()..);
         let alt_stride = alt_source.map_or(0, |s| s.geometry().stride.get());
-        let alt_source_origin = alt_source.map(|s| &s.data()[s.data_origin()..]);
-        let alt_denoised_origin = alt_denoised.map(|s| &s.data()[s.data_origin()..]);
+        let alt_source_origin = alt_source.map(|s| get_dbg(s.data(), s.data_origin()..));
+        let alt_denoised_origin = alt_denoised.map(|s| get_dbg(s.data(), s.data_origin()..));
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
@@ -843,12 +847,12 @@ impl NoiseModel {
                             );
                             for i in 0..n {
                                 for j in 0..n {
-                                    *a.get_unchecked_mut(i * n + j) += (*buffer.get_unchecked(i)
-                                        * *buffer.get_unchecked(j))
+                                    *get_dbg_mut(a, i * n + j) += (*get_dbg(&buffer, i)
+                                        * *get_dbg(&buffer, j))
                                         / BLOCK_NORMALIZATION.powi(2);
                                 }
-                                *b.get_unchecked_mut(i) +=
-                                    (*buffer.get_unchecked(i) * val) / BLOCK_NORMALIZATION.powi(2);
+                                *get_dbg_mut(b, i) +=
+                                    (*get_dbg(&buffer, i) * val) / BLOCK_NORMALIZATION.powi(2);
                             }
                             state.num_observations += 1;
                         }
@@ -870,10 +874,9 @@ impl NoiseModel {
         num_blocks_w: usize,
         num_blocks_h: usize,
     ) {
-        let coeffs = &self.latest_state[channel].eqns.x;
         let num_coords = self.n;
         let luma_gain = self.latest_state[0].ar_gain;
-        let noise_gain = self.latest_state[channel].ar_gain;
+        let noise_gain = get_dbg(&self.latest_state, channel).ar_gain;
         let block_w = BLOCK_SIZE / source.geometry().subsampling_x.get() as usize;
         let block_h = BLOCK_SIZE / source.geometry().subsampling_y.get() as usize;
 
@@ -881,7 +884,7 @@ impl NoiseModel {
             let y_o = by * block_h;
             for bx in 0..num_blocks_w {
                 let x_o = bx * block_w;
-                if flat_blocks[by * num_blocks_w + bx] == 0 {
+                if *get_dbg(flat_blocks, by * num_blocks_w + bx) == 0 {
                     continue;
                 }
                 let num_samples_h = ((frame_dims.1
@@ -922,7 +925,8 @@ impl NoiseModel {
                         0f64
                     };
                     let corr = if channel > 0 {
-                        coeffs[num_coords]
+                        let coeffs = &get_dbg(&self.latest_state, channel).eqns.x;
+                        *get_dbg(coeffs, num_coords)
                     } else {
                         0f64
                     };
@@ -936,7 +940,7 @@ impl NoiseModel {
                         .max((corr * luma_strength).mul_add(-(corr * luma_strength), noise_var))
                         .sqrt();
                     let adjusted_strength = uncorr_std / noise_gain;
-                    self.latest_state[channel]
+                    get_dbg_mut(&mut self.latest_state, channel)
                         .strength_solver
                         .add_measurement(block_mean, adjusted_strength);
                 }
@@ -982,7 +986,7 @@ impl NoiseModelState {
         let mut var = 0f64;
         let n_adjusted = self.eqns.n - usize::from(is_chroma);
         for i in 0..n_adjusted {
-            var += self.eqns.a[i * self.eqns.n + i] / self.num_observations as f64;
+            var += *get_dbg(&self.eqns.a, i * self.eqns.n + i) / self.num_observations as f64;
         }
         var /= n_adjusted as f64;
 
@@ -993,11 +997,12 @@ impl NoiseModelState {
         // from b. E(y^2) = <b - A(:, end)*x(end), x>
         let mut sum_covar = 0f64;
         for i in 0..n_adjusted {
-            let mut bi = self.eqns.b[i];
+            let mut bi = *get_dbg(&self.eqns.b, i);
             if is_chroma {
-                bi -= self.eqns.a[i * self.eqns.n + n_adjusted] * self.eqns.x[n_adjusted];
+                bi -= *get_dbg(&self.eqns.a, i * self.eqns.n + n_adjusted)
+                    * *get_dbg(&self.eqns.x, n_adjusted);
             }
-            sum_covar += (bi * self.eqns.x[i]) / self.num_observations as f64;
+            sum_covar += (bi * *get_dbg(&self.eqns.x, i)) / self.num_observations as f64;
         }
 
         // Now, get an estimate of the variance of uncorrelated noise signal and use
@@ -1034,12 +1039,12 @@ impl StrengthSolver {
         let a = bin - bin_i0 as f64;
         let n = self.num_bins;
         let eqns = &mut self.eqns;
-        eqns.a[bin_i0 * n + bin_i0] += (1f64 - a).powi(2);
-        eqns.a[bin_i1 * n + bin_i0] += a * (1f64 - a);
-        eqns.a[bin_i1 * n + bin_i1] += a.powi(2);
-        eqns.a[bin_i0 * n + bin_i1] += (1f64 - a) * a;
-        eqns.b[bin_i0] += (1f64 - a) * noise_std;
-        eqns.b[bin_i1] += a * noise_std;
+        *get_dbg_mut(&mut eqns.a, bin_i0 * n + bin_i0) += (1f64 - a).powi(2);
+        *get_dbg_mut(&mut eqns.a, bin_i1 * n + bin_i0) += a * (1f64 - a);
+        *get_dbg_mut(&mut eqns.a, bin_i1 * n + bin_i1) += a.powi(2);
+        *get_dbg_mut(&mut eqns.a, bin_i0 * n + bin_i1) += (1f64 - a) * a;
+        *get_dbg_mut(&mut eqns.b, bin_i0) += (1f64 - a) * noise_std;
+        *get_dbg_mut(&mut eqns.b, bin_i1) += a * noise_std;
         self.total += noise_std;
         self.num_equations += 1;
     }
@@ -1054,16 +1059,16 @@ impl StrengthSolver {
         for i in 0..n {
             let i_lo = i.saturating_sub(1);
             let i_hi = (n - 1).min(i + 1);
-            self.eqns.a[i * n + i_lo] -= alpha;
-            self.eqns.a[i * n + i] += 2f64 * alpha;
-            self.eqns.a[i * n + i_hi] -= alpha;
+            *get_dbg_mut(&mut self.eqns.a, i * n + i_lo) -= alpha;
+            *get_dbg_mut(&mut self.eqns.a, i * n + i) += 2f64 * alpha;
+            *get_dbg_mut(&mut self.eqns.a, i * n + i_hi) -= alpha;
         }
 
         // Small regularization to give average noise strength
         let mean = self.total / self.num_equations as f64;
         for i in 0..n {
-            self.eqns.a[i * n + i] += 1f64 / 8192f64;
-            self.eqns.b[i] += mean / 8192f64;
+            *get_dbg_mut(&mut self.eqns.a, i * n + i) += 1f64 / 8192f64;
+            *get_dbg_mut(&mut self.eqns.b, i) += mean / 8192f64;
         }
         let result = self.eqns.solve();
         self.eqns.a = old_a;
@@ -1076,8 +1081,8 @@ impl StrengthSolver {
 
         let mut lut = NoiseStrengthLut::new(self.num_bins);
         for i in 0..self.num_bins {
-            lut.points[i][0] = self.get_center(i);
-            lut.points[i][1] = self.eqns.x[i];
+            get_dbg_mut(&mut lut.points, i)[0] = self.get_center(i);
+            get_dbg_mut(&mut lut.points, i)[1] = *get_dbg(&self.eqns.x, i);
         }
 
         let mut residual = vec![0.0f64; self.num_bins];
@@ -1088,12 +1093,13 @@ impl StrengthSolver {
         while lut.points.len() > 2 {
             let mut min_index = 1usize;
             for j in 1..(lut.points.len() - 1) {
-                if residual[j] < residual[min_index] {
+                if *get_dbg(&residual, j) < *get_dbg(&residual, min_index) {
                     min_index = j;
                 }
             }
-            let dx = lut.points[min_index + 1][0] - lut.points[min_index - 1][0];
-            let avg_residual = residual[min_index] / dx;
+            let dx =
+                get_dbg(&lut.points, min_index + 1)[0] - get_dbg(&lut.points, min_index - 1)[0];
+            let avg_residual = get_dbg(&residual, min_index) / dx;
             if lut.points.len() <= max_output_points && avg_residual > TOLERANCE {
                 break;
             }
@@ -1116,7 +1122,10 @@ impl StrengthSolver {
         let bin_i0 = bin.floor() as usize;
         let bin_i1 = (self.num_bins - 1).min(bin_i0 + 1);
         let a = bin - bin_i0 as f64;
-        (1f64 - a).mul_add(self.eqns.x[bin_i0], a * self.eqns.x[bin_i1])
+        (1f64 - a).mul_add(
+            *get_dbg(&self.eqns.x, bin_i0),
+            a * *get_dbg(&self.eqns.x, bin_i1),
+        )
     }
 
     pub fn clear(&mut self) {
@@ -1142,22 +1151,25 @@ impl StrengthSolver {
         let dx = 255f64 / self.num_bins as f64;
         #[allow(clippy::needless_range_loop)]
         for i in start.max(1)..end.min(lut.points.len() - 1) {
-            let lower = 0usize.max(self.get_bin_index(lut.points[i - 1][0]).floor() as usize);
-            let upper =
-                (self.num_bins - 1).min(self.get_bin_index(lut.points[i + 1][0]).ceil() as usize);
+            let lower =
+                0usize.max(self.get_bin_index(get_dbg(&lut.points, i - 1)[0]).floor() as usize);
+            let upper = (self.num_bins - 1)
+                .min(self.get_bin_index(get_dbg(&lut.points, i + 1)[0]).ceil() as usize);
             let mut r = 0f64;
             for j in lower..=upper {
                 let x = self.get_center(j);
-                if x < lut.points[i - 1][0] || x >= lut.points[i + 1][0] {
+                if x < get_dbg(&lut.points, i - 1)[0] || x >= get_dbg(&lut.points, i + 1)[0] {
                     continue;
                 }
 
-                let y = self.eqns.x[j];
-                let a = (x - lut.points[i - 1][0]) / (lut.points[i + 1][0] - lut.points[i - 1][0]);
-                let estimate_y = lut.points[i - 1][1].mul_add(1f64 - a, lut.points[i + 1][1] * a);
+                let y = *get_dbg(&self.eqns.x, j);
+                let a = (x - get_dbg(&lut.points, i - 1)[0])
+                    / (get_dbg(&lut.points, i + 1)[0] - get_dbg(&lut.points, i - 1)[0]);
+                let estimate_y = get_dbg(&lut.points, i - 1)[1]
+                    .mul_add(1f64 - a, get_dbg(&lut.points, i + 1)[1] * a);
                 r += (y - estimate_y).abs();
             }
-            residual[i] = r * dx;
+            *get_dbg_mut(residual, i) = r * dx;
         }
     }
 

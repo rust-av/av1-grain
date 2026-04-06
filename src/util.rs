@@ -1,8 +1,11 @@
+use std::slice::SliceIndex;
 #[cfg(feature = "diff")]
 use std::{borrow::Cow, mem::size_of};
 
 #[cfg(feature = "diff")]
 use v_frame::{frame::Frame, pixel::Pixel};
+
+use cfg_if::cfg_if;
 
 #[cfg(feature = "diff")]
 pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Frame<u8>> {
@@ -61,5 +64,38 @@ pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Fr
         Cow::Owned(u8_frame)
     } else {
         unimplemented!("Bit depths greater than 16 are not currently supported");
+    }
+}
+
+#[allow(
+    clippy::inline_always,
+    reason = "intended as a thin compile-time-elided wrapper"
+)]
+#[inline(always)]
+pub fn get_dbg<T, I: SliceIndex<[T]>>(arr: &[T], index: I) -> &<I as SliceIndex<[T]>>::Output {
+    cfg_if! {
+        if #[cfg(debug_assertions)] {
+            arr.get(index).expect("array index out of bounds")
+        } else {
+            unsafe{ arr.get_unchecked(index) }
+        }
+    }
+}
+
+#[allow(
+    clippy::inline_always,
+    reason = "intended as a thin compile-time-elided wrapper"
+)]
+#[inline(always)]
+pub fn get_dbg_mut<T, I: SliceIndex<[T]>>(
+    arr: &mut [T],
+    index: I,
+) -> &mut <I as SliceIndex<[T]>>::Output {
+    cfg_if! {
+        if #[cfg(debug_assertions)] {
+            arr.get_mut(index).expect("array index out of bounds")
+        } else {
+            unsafe{ arr.get_unchecked_mut(index) }
+        }
     }
 }
