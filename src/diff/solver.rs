@@ -212,9 +212,9 @@ impl FlatBlockFinder {
         let plane_origin = &plane.data()[plane.data_origin()..];
 
         for yi in 0..BLOCK_SIZE {
-            let y = offset_y + yi.clamp(0, plane.height().get() - 1);
+            let y = (offset_y + yi).clamp(0, plane.height().get() - 1);
             for xi in 0..BLOCK_SIZE {
-                let x = offset_x + xi.clamp(0, plane.width().get() - 1);
+                let x = (offset_x + xi).clamp(0, plane.width().get() - 1);
                 // SAFETY: We know the bounds of the plane data and `block_result`
                 // and do not exceed them.
                 unsafe {
