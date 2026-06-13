@@ -1,9 +1,6 @@
-use std::{f64::consts::PI, mem::size_of};
+use std::f64::consts::PI;
 
-use v_frame::{
-    plane::Plane,
-    prelude::{CastFromPrimitive, Pixel},
-};
+use v_frame::{pixel::Pixel, plane::Plane};
 
 /// Estimates the amount of noise within a plane.
 /// Returns `None` if a reliable estimate cannot be obtained
@@ -28,9 +25,9 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
         unimplemented!("Bit depths greater than 16 are not currently supported");
     }
 
-    let width = plane.cfg.width;
-    let height = plane.cfg.height;
-    let stride = plane.cfg.stride;
+    let width = plane.width().get();
+    let height = plane.height().get();
+    let stride = plane.geometry().stride.get();
 
     let mut accum = 0u64;
     let mut count = 0u64;
@@ -43,9 +40,14 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
                 for jj in -1isize..=1isize {
                     let idx = (center_idx + ii * stride as isize + jj) as usize;
                     mat[(ii + 1) as usize][(jj + 1) as usize] = if size_of::<T>() == 1 {
-                        i16::cast_from(plane.data_origin()[idx])
+                        plane.data()[plane.data_origin() + idx]
+                            .to_i16()
+                            .expect("fits into i16")
                     } else {
-                        (u16::cast_from(plane.data_origin()[idx]) >> (bit_depth - 8usize)) as i16
+                        let pix = plane.data()[plane.data_origin() + idx]
+                            .to_u16()
+                            .expect("fits into u16");
+                        (pix >> (bit_depth - 8)).cast_signed()
                     };
                 }
             }
