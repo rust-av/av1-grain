@@ -1151,8 +1151,7 @@ impl StrengthSolver {
         let dx = 255f64 / self.num_bins as f64;
         #[allow(clippy::needless_range_loop)]
         for i in start.max(1)..end.min(lut.points.len() - 1) {
-            let lower =
-                0usize.max(self.get_bin_index(get_dbg(&lut.points, i - 1)[0]).floor() as usize);
+            let lower = self.get_bin_index(get_dbg(&lut.points, i - 1)[0]).floor() as usize;
             let upper = (self.num_bins - 1)
                 .min(self.get_bin_index(get_dbg(&lut.points, i + 1)[0]).ceil() as usize);
             let mut r = 0f64;
