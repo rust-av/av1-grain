@@ -2,8 +2,6 @@ use std::f64::consts::PI;
 
 use v_frame::{pixel::Pixel, plane::Plane};
 
-use crate::util::get_dbg;
-
 /// Estimates the amount of noise within a plane.
 /// Returns `None` if a reliable estimate cannot be obtained
 /// due to too few smooth pixels.
@@ -42,7 +40,8 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
             for ii in -1isize..=1isize {
                 for jj in -1isize..=1isize {
                     let idx = (i * stride + j) as isize + ii * stride as isize + jj;
-                    let pix: u16 = (*get_dbg(data, data_origin + idx as usize)).into();
+                    let pix: u16 =
+                        (*unsafe { data.get_unchecked(data_origin + idx as usize) }).into();
                     mat[(ii + 1) as usize][(jj + 1) as usize] = if size_of::<T>() == 1 {
                         pix as i16
                     } else {

@@ -19,9 +19,7 @@ use nom::{
     sequence::{delimited, preceded},
 };
 
-use crate::{
-    GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS, util::get_dbg,
-};
+use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS};
 
 /// This file has the implementation details of the grain table.
 ///
@@ -142,28 +140,31 @@ fn e_params(input: &str) -> IResult<&str, EParams> {
                 ));
             }
             let parsed = EParams {
-                start: get_dbg(&items, 0).parse().map_err(|_e| {
+                start: unsafe { items.get_unchecked(0) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse start_time",
                     ))
                 })?,
-                end: get_dbg(&items, 1).parse().map_err(|_e| {
+                end: unsafe { items.get_unchecked(1) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse end_time",
                     ))
                 })?,
-                apply: get_dbg(&items, 2).parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse apply_grain",
-                    ))
-                })? > 0,
-                seed: get_dbg(&items, 3).parse().map_err(|_e| {
+                apply: unsafe { items.get_unchecked(2) }
+                    .parse::<u8>()
+                    .map_err(|_e| {
+                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                            input,
+                            ErrorKind::Digit,
+                            "Failed to parse apply_grain",
+                        ))
+                    })?
+                    > 0,
+                seed: unsafe { items.get_unchecked(3) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
@@ -222,84 +223,89 @@ fn p_params(input: &str) -> IResult<&str, PParams> {
             }
 
             let parsed = PParams {
-                ar_coeff_lag: get_dbg(&items, 0).parse().map_err(|_e| {
+                ar_coeff_lag: unsafe { items.get_unchecked(0) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse ar_coeff_lag",
                     ))
                 })?,
-                ar_coeff_shift: get_dbg(&items, 1).parse().map_err(|_e| {
+                ar_coeff_shift: unsafe { items.get_unchecked(1) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse ar_coeff_shift",
                     ))
                 })?,
-                grain_scale_shift: get_dbg(&items, 2).parse().map_err(|_e| {
+                grain_scale_shift: unsafe { items.get_unchecked(2) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse grain_scale_shift",
                     ))
                 })?,
-                scaling_shift: get_dbg(&items, 3).parse().map_err(|_e| {
+                scaling_shift: unsafe { items.get_unchecked(3) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse scaling_shift",
                     ))
                 })?,
-                chroma_scaling_from_luma: get_dbg(&items, 4).parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse chroma_scaling_from_luma",
-                    ))
-                })? > 0,
-                overlap_flag: get_dbg(&items, 5).parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse overlap_flag",
-                    ))
-                })? > 0,
-                cb_mult: get_dbg(&items, 6).parse().map_err(|_e| {
+                chroma_scaling_from_luma: unsafe { items.get_unchecked(4) }.parse::<u8>().map_err(
+                    |_e| {
+                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                            input,
+                            ErrorKind::Digit,
+                            "Failed to parse chroma_scaling_from_luma",
+                        ))
+                    },
+                )? > 0,
+                overlap_flag: unsafe { items.get_unchecked(5) }
+                    .parse::<u8>()
+                    .map_err(|_e| {
+                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                            input,
+                            ErrorKind::Digit,
+                            "Failed to parse overlap_flag",
+                        ))
+                    })?
+                    > 0,
+                cb_mult: unsafe { items.get_unchecked(6) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_mult",
                     ))
                 })?,
-                cb_luma_mult: get_dbg(&items, 7).parse().map_err(|_e| {
+                cb_luma_mult: unsafe { items.get_unchecked(7) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_luma_mult",
                     ))
                 })?,
-                cb_offset: get_dbg(&items, 8).parse().map_err(|_e| {
+                cb_offset: unsafe { items.get_unchecked(8) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_offset",
                     ))
                 })?,
-                cr_mult: get_dbg(&items, 9).parse().map_err(|_e| {
+                cr_mult: unsafe { items.get_unchecked(9) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_mult",
                     ))
                 })?,
-                cr_luma_mult: get_dbg(&items, 10).parse().map_err(|_e| {
+                cr_luma_mult: unsafe { items.get_unchecked(10) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_luma_mult",
                     ))
                 })?,
-                cr_offset: get_dbg(&items, 11).parse().map_err(|_e| {
+                cr_offset: unsafe { items.get_unchecked(11) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
@@ -359,7 +365,7 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
     )
     .parse(input)?;
 
-    let len = *get_dbg(&values, 0) as usize;
+    let len = *unsafe { values.get_unchecked(0) } as usize;
     if values.len() != len * 2 + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
             input,
@@ -374,12 +380,14 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
 
     Ok((
         input,
-        get_dbg(&values, 1..)
+        unsafe { values.get_unchecked(1..) }
             .chunks_exact(2)
             .map(|chunk| {
                 // we know the chunk is exactly length 2,
                 // but `chunks_exact` doesn't specify that in the type definition
-                [*get_dbg(chunk, 0), *get_dbg(chunk, 1)]
+                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
+                    chunk.get_unchecked(1)
+                }]
             })
             .collect(),
     ))
@@ -407,7 +415,7 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
     )
     .parse(input)?;
 
-    let len = *get_dbg(&values, 0) as usize;
+    let len = *unsafe { values.get_unchecked(0) } as usize;
     if values.len() != len * 2 + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
             input,
@@ -422,12 +430,14 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 
     Ok((
         input,
-        get_dbg(&values, 1..)
+        unsafe { values.get_unchecked(1..) }
             .chunks_exact(2)
             .map(|chunk| {
                 // we know the chunk is exactly length 2,
                 // but `chunks_exact` doesn't specify that in the type definition
-                [*get_dbg(chunk, 0), *get_dbg(chunk, 1)]
+                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
+                    chunk.get_unchecked(1)
+                }]
             })
             .collect(),
     ))
@@ -455,7 +465,7 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
     )
     .parse(input)?;
 
-    let len = *get_dbg(&values, 0) as usize;
+    let len = *unsafe { values.get_unchecked(0) } as usize;
     if values.len() != len * 2 + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
             input,
@@ -470,12 +480,14 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 
     Ok((
         input,
-        get_dbg(&values, 1..)
+        unsafe { values.get_unchecked(1..) }
             .chunks_exact(2)
             .map(|chunk| {
                 // we know the chunk is exactly length 2,
                 // but `chunks_exact` doesn't specify that in the type definition
-                [*get_dbg(chunk, 0), *get_dbg(chunk, 1)]
+                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
+                    chunk.get_unchecked(1)
+                }]
             })
             .collect(),
     ))

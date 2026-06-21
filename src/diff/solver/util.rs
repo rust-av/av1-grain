@@ -2,10 +2,7 @@ use std::ptr;
 
 use v_frame::plane::Plane;
 
-use crate::{
-    diff::BLOCK_SIZE,
-    util::{get_dbg, get_dbg_mut},
-};
+use crate::diff::BLOCK_SIZE;
 
 /// Solves Ax = b, where x and b are column vectors of size nx1 and A is nxn
 #[allow(clippy::many_single_char_names)]
@@ -16,48 +13,52 @@ pub(super) fn linsolve(
     b: &mut [f64],
     x: &mut [f64],
 ) -> bool {
-    // SAFETY: We need to ensure that `n` doesn't exceed the bounds of these arrays.
-    // But this is a crate-private function, so we control all input.
-    unsafe {
-        // Forward elimination
-        for k in 0..(n - 1) {
-            // Bring the largest magnitude to the diagonal position
-            ((k + 1)..n).rev().for_each(|i| {
-                if get_dbg(a, (i - 1) * stride + k).abs() < get_dbg(a, i * stride + k).abs() {
-                    (0..n).for_each(|j| {
-                        swap_unchecked(a, i * stride + j, (i - 1) * stride + j);
-                    });
-                    swap_unchecked(b, i, i - 1);
-                }
-            });
-
-            for i in k..(n - 1) {
-                if get_dbg(a, k * stride + k).abs() < f64::EPSILON {
-                    return false;
-                }
-                let c = *get_dbg(a, (i + 1) * stride + k) / *get_dbg(a, k * stride + k);
+    // Forward elimination
+    for k in 0..(n - 1) {
+        // Bring the largest magnitude to the diagonal position
+        ((k + 1)..n).rev().for_each(|i| {
+            if unsafe { a.get_unchecked((i - 1) * stride + k) }.abs()
+                < unsafe { a.get_unchecked(i * stride + k) }.abs()
+            {
                 (0..n).for_each(|j| {
-                    let a2_val = *get_dbg(a, k * stride + j);
-                    let a_val = get_dbg_mut(a, (i + 1) * stride + j);
-                    *a_val = c.mul_add(-a2_val, *a_val);
+                    // SAFETY: `linsolve` is crate-private; callers provide matrix dimensions
+                    // matching the backing slices.
+                    unsafe { swap_unchecked(a, i * stride + j, (i - 1) * stride + j) };
                 });
-                let b2_val = *get_dbg(b, k);
-                let b_val = get_dbg_mut(b, i + 1);
-                *b_val = c.mul_add(-b2_val, *b_val);
+                // SAFETY: `i` iterates over `1..n`, so both row indices are valid for `b`.
+                unsafe { swap_unchecked(b, i, i - 1) };
             }
-        }
+        });
 
-        // Backward substitution
-        for i in (0..n).rev() {
-            if get_dbg(a, i * stride + i).abs() < f64::EPSILON {
+        for i in k..(n - 1) {
+            if unsafe { a.get_unchecked(k * stride + k) }.abs() < f64::EPSILON {
                 return false;
             }
-            let mut c = 0.0f64;
-            for j in (i + 1)..n {
-                c = get_dbg(a, i * stride + j).mul_add(*get_dbg(x, j), c);
-            }
-            *get_dbg_mut(x, i) = (*get_dbg(b, i) - c) / *get_dbg(a, i * stride + i);
+            let c = *unsafe { a.get_unchecked((i + 1) * stride + k) }
+                / *unsafe { a.get_unchecked(k * stride + k) };
+            (0..n).for_each(|j| {
+                let a2_val = *unsafe { a.get_unchecked(k * stride + j) };
+                let a_val = unsafe { a.get_unchecked_mut((i + 1) * stride + j) };
+                *a_val = c.mul_add(-a2_val, *a_val);
+            });
+            let b2_val = *unsafe { b.get_unchecked(k) };
+            let b_val = unsafe { b.get_unchecked_mut(i + 1) };
+            *b_val = c.mul_add(-b2_val, *b_val);
         }
+    }
+
+    // Backward substitution
+    for i in (0..n).rev() {
+        if unsafe { a.get_unchecked(i * stride + i) }.abs() < f64::EPSILON {
+            return false;
+        }
+        let mut c = 0.0f64;
+        for j in (i + 1)..n {
+            c = unsafe { a.get_unchecked(i * stride + j) }
+                .mul_add(*unsafe { x.get_unchecked(j) }, c);
+        }
+        *unsafe { x.get_unchecked_mut(i) } =
+            (*unsafe { b.get_unchecked(i) } - c) / *unsafe { a.get_unchecked(i * stride + i) };
     }
 
     true
@@ -88,10 +89,11 @@ pub(super) fn multiply_mat(
         for col in 0..m2_cols {
             let mut sum = 0f64;
             for inner in 0..inner_dim {
-                sum += get_dbg(m1, row * inner_dim + inner) * get_dbg(m2, inner * m2_cols + col);
+                sum += unsafe { m1.get_unchecked(row * inner_dim + inner) }
+                    * unsafe { m2.get_unchecked(inner * m2_cols + col) };
             }
 
-            *get_dbg_mut(res, idx) = sum;
+            *unsafe { res.get_unchecked_mut(idx) } = sum;
             idx += 1;
         }
     }
@@ -129,16 +131,17 @@ pub(super) fn extract_ar_row(
     debug_assert!(coords.len() >= num_coords);
 
     for i in 0..num_coords {
-        let x_i = x as isize + get_dbg(coords, i)[0];
-        let y_i = y as isize + get_dbg(coords, i)[1];
+        let x_i = x as isize + unsafe { coords.get_unchecked(i) }[0];
+        let y_i = y as isize + unsafe { coords.get_unchecked(i) }[1];
         debug_assert!(x_i >= 0);
         debug_assert!(y_i >= 0);
         let index = y_i as usize * stride + x_i as usize;
-        *get_dbg_mut(buffer, i) =
-            f64::from(*get_dbg(source_origin, index)) - f64::from(*get_dbg(denoised_origin, index));
+        *unsafe { buffer.get_unchecked_mut(i) } =
+            f64::from(*unsafe { source_origin.get_unchecked(index) })
+                - f64::from(*unsafe { denoised_origin.get_unchecked(index) });
     }
-    let val = f64::from(*get_dbg(source_origin, y * stride + x))
-        - f64::from(*get_dbg(denoised_origin, y * stride + x));
+    let val = f64::from(*unsafe { source_origin.get_unchecked(y * stride + x) })
+        - f64::from(*unsafe { denoised_origin.get_unchecked(y * stride + x) });
 
     if let Some(alt_source_origin) = alt_source_origin {
         if let Some(alt_denoised_origin) = alt_denoised_origin {
@@ -151,12 +154,12 @@ pub(super) fn extract_ar_row(
                 for dx_i in 0..(1 << dec.0) {
                     let x_up = (x << dec.0) + dx_i;
                     let index = y_up * alt_stride + x_up;
-                    source_sum += u64::from(*get_dbg(alt_source_origin, index));
-                    denoised_sum += u64::from(*get_dbg(alt_denoised_origin, index));
+                    source_sum += u64::from(*unsafe { alt_source_origin.get_unchecked(index) });
+                    denoised_sum += u64::from(*unsafe { alt_denoised_origin.get_unchecked(index) });
                     num_samples += 1;
                 }
             }
-            *get_dbg_mut(buffer, num_coords) =
+            *unsafe { buffer.get_unchecked_mut(num_coords) } =
                 (source_sum as f64 - denoised_sum as f64) / num_samples as f64;
         }
     }
@@ -174,12 +177,16 @@ pub(super) fn get_block_mean(
     let max_h = (frame_dims.1 - y_o).min(BLOCK_SIZE);
     let max_w = (frame_dims.0 - x_o).min(BLOCK_SIZE);
 
-    let data_origin = get_dbg(source.data(), source.geometry().data_origin()..);
+    let data_origin = unsafe {
+        source
+            .data()
+            .get_unchecked(source.geometry().data_origin()..)
+    };
     let mut block_sum = 0u64;
     for y in 0..max_h {
         for x in 0..max_w {
             let index = (y_o + y) * source.geometry().stride() + x_o + x;
-            block_sum += u64::from(*get_dbg(data_origin, index));
+            block_sum += u64::from(*unsafe { data_origin.get_unchecked(index) });
         }
     }
 
@@ -199,15 +206,23 @@ pub(super) fn get_noise_var(
     let max_h = (frame_dims.1 - y_o).min(block_h);
     let max_w = (frame_dims.0 - x_o).min(block_w);
 
-    let source_origin = get_dbg(source.data(), source.geometry().data_origin()..);
-    let denoised_origin = get_dbg(denoised.data(), denoised.geometry().data_origin()..);
+    let source_origin = unsafe {
+        source
+            .data()
+            .get_unchecked(source.geometry().data_origin()..)
+    };
+    let denoised_origin = unsafe {
+        denoised
+            .data()
+            .get_unchecked(denoised.geometry().data_origin()..)
+    };
     let mut noise_var_sum = 0u64;
     let mut noise_sum = 0i64;
     for y in 0..max_h {
         for x in 0..max_w {
             let index = (y_o + y) * source.geometry().stride() + x_o + x;
-            let noise = i64::from(*get_dbg(source_origin, index))
-                - i64::from(*get_dbg(denoised_origin, index));
+            let noise = i64::from(*unsafe { source_origin.get_unchecked(index) })
+                - i64::from(*unsafe { denoised_origin.get_unchecked(index) });
             noise_sum += noise;
             noise_var_sum += noise.pow(2) as u64;
         }
