@@ -143,26 +143,26 @@ pub(super) fn extract_ar_row(
     let val = f64::from(*unsafe { source_origin.get_unchecked(y * stride + x) })
         - f64::from(*unsafe { denoised_origin.get_unchecked(y * stride + x) });
 
-    if let Some(alt_source_origin) = alt_source_origin {
-        if let Some(alt_denoised_origin) = alt_denoised_origin {
-            let mut source_sum = 0u64;
-            let mut denoised_sum = 0u64;
-            let mut num_samples = 0usize;
+    let (Some(alt_source), Some(alt_denoised)) = (alt_source_origin, alt_denoised_origin) else {
+        return val;
+    };
 
-            for dy_i in 0..(1 << dec.1) {
-                let y_up = (y << dec.1) + dy_i;
-                for dx_i in 0..(1 << dec.0) {
-                    let x_up = (x << dec.0) + dx_i;
-                    let index = y_up * alt_stride + x_up;
-                    source_sum += u64::from(*unsafe { alt_source_origin.get_unchecked(index) });
-                    denoised_sum += u64::from(*unsafe { alt_denoised_origin.get_unchecked(index) });
-                    num_samples += 1;
-                }
-            }
-            *unsafe { buffer.get_unchecked_mut(num_coords) } =
-                (source_sum as f64 - denoised_sum as f64) / num_samples as f64;
+    let mut source_sum = 0u64;
+    let mut denoised_sum = 0u64;
+    let mut num_samples = 0usize;
+
+    for dy_i in 0..(1 << dec.1) {
+        let y_up = (y << dec.1) + dy_i;
+        for dx_i in 0..(1 << dec.0) {
+            let x_up = (x << dec.0) + dx_i;
+            let index = y_up * alt_stride + x_up;
+            source_sum += u64::from(*unsafe { alt_source.get_unchecked(index) });
+            denoised_sum += u64::from(*unsafe { alt_denoised.get_unchecked(index) });
+            num_samples += 1;
         }
     }
+    *unsafe { buffer.get_unchecked_mut(num_coords) } =
+        (source_sum as f64 - denoised_sum as f64) / num_samples as f64;
 
     val
 }
