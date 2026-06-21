@@ -149,7 +149,6 @@ string_slice = "warn"
 suspicious_operation_groupings = "warn"
 suspicious_xor_used_as_pow = "warn"
 transmute_undefined_repr = "warn"
-undocumented_unsafe_blocks = "warn"
 unnecessary_debug_formatting = "warn"
 unwrap_used = "warn"
 # Annoyances
