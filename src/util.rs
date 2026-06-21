@@ -14,8 +14,6 @@ pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Fr
         // SAFETY: We know from the size check that this must be a `Frame<u8>`
         Cow::Borrowed(unsafe { &*(frame as *const Frame<T>).cast::<Frame<u8>>() })
     } else if size_of::<T>() == 2 {
-        use std::num::NonZeroU8;
-
         use v_frame::{chroma::ChromaSubsampling, frame::FrameBuilder};
 
         assert!(bit_depth > 8 && bit_depth <= 16);
@@ -23,7 +21,7 @@ pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Fr
             frame.y_plane.width(),
             frame.y_plane.height(),
             frame.subsampling,
-            NonZeroU8::new(8).expect("non-zero constant"),
+            8,
         )
         .build()
         .expect("frame should build");
@@ -58,7 +56,8 @@ pub fn frame_into_u8<T: Pixel>(frame: &Frame<T>, bit_depth: usize) -> Cow<'_, Fr
             };
 
             for (i, o) in in_plane.pixels().zip(out_plane.pixels_mut()) {
-                *o = (i.to_u16().expect("i fits in u16") >> (bit_depth - 8usize)) as u8;
+                let i: u16 = i.into();
+                *o = (i >> (bit_depth - 8usize)) as u8;
             }
         }
         Cow::Owned(u8_frame)

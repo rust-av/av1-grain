@@ -92,8 +92,8 @@ impl FlatBlockFinder {
         const NORM_WEIGHT: f64 = -12434f64;
         const OFFSET: f64 = 2.5694f64;
 
-        let num_blocks_w = plane.width().get().div_ceil(BLOCK_SIZE);
-        let num_blocks_h = plane.height().get().div_ceil(BLOCK_SIZE);
+        let num_blocks_w = plane.width().div_ceil(BLOCK_SIZE);
+        let num_blocks_h = plane.height().div_ceil(BLOCK_SIZE);
         let num_blocks = num_blocks_w * num_blocks_h;
         let mut flat_blocks = vec![0u8; num_blocks];
         let mut num_flat = 0;
@@ -207,16 +207,15 @@ impl FlatBlockFinder {
     ) {
         let mut plane_coords = [0f64; LOW_POLY_NUM_PARAMS];
         let mut a_t_a_inv_b = [0f64; LOW_POLY_NUM_PARAMS];
-        let plane_origin = get_dbg(plane.data(), plane.data_origin()..);
+        let plane_origin = get_dbg(plane.data(), plane.geometry().data_origin()..);
 
         for yi in 0..BLOCK_SIZE {
-            let y = (offset_y + yi).clamp(0, plane.height().get() - 1);
+            let y = (offset_y + yi).clamp(0, plane.height() - 1);
             for xi in 0..BLOCK_SIZE {
-                let x = (offset_x + xi).clamp(0, plane.width().get() - 1);
-                *get_dbg_mut(block_result, yi * BLOCK_SIZE + xi) = f64::from(*get_dbg(
-                    plane_origin,
-                    y * plane.geometry().stride.get() + x,
-                )) / BLOCK_NORMALIZATION;
+                let x = (offset_x + xi).clamp(0, plane.width() - 1);
+                *get_dbg_mut(block_result, yi * BLOCK_SIZE + xi) =
+                    f64::from(*get_dbg(plane_origin, y * plane.geometry().stride() + x))
+                        / BLOCK_NORMALIZATION;
             }
         }
 
@@ -401,8 +400,8 @@ impl NoiseModel {
         denoised: &Frame<u8>,
         flat_blocks: &[u8],
     ) -> NoiseStatus {
-        let num_blocks_w = source.y_plane.width().get().div_ceil(BLOCK_SIZE);
-        let num_blocks_h = source.y_plane.height().get().div_ceil(BLOCK_SIZE);
+        let num_blocks_w = source.y_plane.width().div_ceil(BLOCK_SIZE);
+        let num_blocks_h = source.y_plane.height().div_ceil(BLOCK_SIZE);
         let mut y_model_different = false;
 
         // Clear the latest equation system
@@ -419,7 +418,7 @@ impl NoiseModel {
             return NoiseStatus::Error(anyhow!("Not enough flat blocks to update noise estimate"));
         }
 
-        let frame_dims = (source.y_plane.width().get(), source.y_plane.height().get());
+        let frame_dims = (source.y_plane.width(), source.y_plane.height());
         for channel in 0..(if source.subsampling == ChromaSubsampling::Monochrome {
             1
         } else {
@@ -787,19 +786,20 @@ impl NoiseModel {
         let b = &mut state.eqns.b;
         let mut buffer = vec![0f64; num_coords + 1].into_boxed_slice();
         let n = state.eqns.n;
-        let block_w = BLOCK_SIZE / source.geometry().subsampling_x.get() as usize;
-        let block_h = BLOCK_SIZE / source.geometry().subsampling_y.get() as usize;
+        let block_w = BLOCK_SIZE / usize::from(source.geometry().subsampling_x());
+        let block_h = BLOCK_SIZE / usize::from(source.geometry().subsampling_y());
 
         let dec = (
-            source.geometry().subsampling_x.get() as usize >> 1,
-            source.geometry().subsampling_y.get() as usize >> 1,
+            usize::from(source.geometry().subsampling_x()) >> 1,
+            usize::from(source.geometry().subsampling_y()) >> 1,
         );
-        let stride = source.geometry().stride.get();
-        let source_origin = get_dbg(source.data(), source.data_origin()..);
-        let denoised_origin = get_dbg(denoised.data(), denoised.data_origin()..);
-        let alt_stride = alt_source.map_or(0, |s| s.geometry().stride.get());
-        let alt_source_origin = alt_source.map(|s| get_dbg(s.data(), s.data_origin()..));
-        let alt_denoised_origin = alt_denoised.map(|s| get_dbg(s.data(), s.data_origin()..));
+        let stride = source.geometry().stride();
+        let source_origin = get_dbg(source.data(), source.geometry().data_origin()..);
+        let denoised_origin = get_dbg(denoised.data(), denoised.geometry().data_origin()..);
+        let alt_stride = alt_source.map_or(0, |s| s.geometry().stride());
+        let alt_source_origin = alt_source.map(|s| get_dbg(s.data(), s.geometry().data_origin()..));
+        let alt_denoised_origin =
+            alt_denoised.map(|s| get_dbg(s.data(), s.geometry().data_origin()..));
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
@@ -877,8 +877,8 @@ impl NoiseModel {
         let num_coords = self.n;
         let luma_gain = self.latest_state[0].ar_gain;
         let noise_gain = get_dbg(&self.latest_state, channel).ar_gain;
-        let block_w = BLOCK_SIZE / source.geometry().subsampling_x.get() as usize;
-        let block_h = BLOCK_SIZE / source.geometry().subsampling_y.get() as usize;
+        let block_w = BLOCK_SIZE / usize::from(source.geometry().subsampling_x());
+        let block_h = BLOCK_SIZE / usize::from(source.geometry().subsampling_y());
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
@@ -888,11 +888,11 @@ impl NoiseModel {
                     continue;
                 }
                 let num_samples_h = ((frame_dims.1
-                    / source.geometry().subsampling_y.get() as usize)
+                    / usize::from(source.geometry().subsampling_y()))
                     - by * block_h)
                     .min(block_h);
                 let num_samples_w = ((frame_dims.0
-                    / source.geometry().subsampling_x.get() as usize)
+                    / usize::from(source.geometry().subsampling_x()))
                     - bx * block_w)
                     .min(block_w);
                 // Make sure that we have a reasonable amount of samples to consider the
@@ -901,15 +901,15 @@ impl NoiseModel {
                     let block_mean = get_block_mean(
                         alt_source.unwrap_or(source),
                         frame_dims,
-                        x_o << (source.geometry().subsampling_x.get() >> 1),
-                        y_o << (source.geometry().subsampling_y.get() >> 1),
+                        x_o << (usize::from(source.geometry().subsampling_x()) >> 1),
+                        y_o << (usize::from(source.geometry().subsampling_y()) >> 1),
                     );
                     let noise_var = get_noise_var(
                         source,
                         denoised,
                         (
-                            frame_dims.0 >> (source.geometry().subsampling_x.get() >> 1),
-                            frame_dims.1 >> (source.geometry().subsampling_y.get() >> 1),
+                            frame_dims.0 >> (usize::from(source.geometry().subsampling_x()) >> 1),
+                            frame_dims.1 >> (usize::from(source.geometry().subsampling_y()) >> 1),
                         ),
                         x_o,
                         y_o,

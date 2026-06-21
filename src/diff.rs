@@ -130,12 +130,12 @@ fn verify_dimensions_match(source: &Frame<u8>, denoised: &Frame<u8>) -> Result<(
     );
 
     let res_1 = (
-        source.u_plane.as_ref().map(|p| p.width().get()),
-        source.u_plane.as_ref().map(|p| p.height().get()),
+        source.u_plane.as_ref().map(|p| p.width()),
+        source.u_plane.as_ref().map(|p| p.height()),
     );
     let res_2 = (
-        denoised.u_plane.as_ref().map(|p| p.width().get()),
-        denoised.u_plane.as_ref().map(|p| p.height().get()),
+        denoised.u_plane.as_ref().map(|p| p.width()),
+        denoised.u_plane.as_ref().map(|p| p.height()),
     );
     ensure!(
         res_1 == res_2,

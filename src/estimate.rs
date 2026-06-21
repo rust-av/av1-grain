@@ -2,6 +2,8 @@ use std::f64::consts::PI;
 
 use v_frame::{pixel::Pixel, plane::Plane};
 
+use crate::util::get_dbg;
+
 /// Estimates the amount of noise within a plane.
 /// Returns `None` if a reliable estimate cannot be obtained
 /// due to too few smooth pixels.
@@ -25,29 +27,26 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
         unimplemented!("Bit depths greater than 16 are not currently supported");
     }
 
-    let width = plane.width().get();
-    let height = plane.height().get();
-    let stride = plane.geometry().stride.get();
+    let width = plane.width();
+    let height = plane.height();
+    let data_origin = plane.geometry().data_origin();
+    let stride = plane.geometry().stride();
+    let data = plane.data();
 
     let mut accum = 0u64;
     let mut count = 0u64;
     for i in 1..(height - 1) {
         for j in 1..(width - 1) {
             // Setup a small 3x3 matrix.
-            let center_idx = (i * stride + j) as isize;
             let mut mat = [[0i16; 3]; 3];
             for ii in -1isize..=1isize {
                 for jj in -1isize..=1isize {
-                    let idx = (center_idx + ii * stride as isize + jj) as usize;
+                    let idx = (i * stride + j) as isize + ii * stride as isize + jj;
+                    let pix: u16 = (*get_dbg(data, data_origin + idx as usize)).into();
                     mat[(ii + 1) as usize][(jj + 1) as usize] = if size_of::<T>() == 1 {
-                        plane.data()[plane.data_origin() + idx]
-                            .to_i16()
-                            .expect("fits into i16")
+                        pix as i16
                     } else {
-                        let pix = plane.data()[plane.data_origin() + idx]
-                            .to_u16()
-                            .expect("fits into u16");
-                        (pix >> (bit_depth - 8)).cast_signed()
+                        (pix >> (bit_depth - 8)) as i16
                     };
                 }
             }
@@ -70,4 +69,31 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
     }
 
     (count >= 16).then(|| accum as f64 / (6u64 * count) as f64 * (PI / 2f64).sqrt())
+}
+
+#[cfg(test)]
+mod tests {
+    use v_frame::{chroma::ChromaSubsampling, frame::FrameBuilder};
+
+    use super::estimate_plane_noise;
+
+    #[test]
+    fn estimate_uses_visible_pixels_when_plane_has_padding() {
+        let visible = vec![10u8; 6 * 6];
+        let mut frame = FrameBuilder::new(6, 6, ChromaSubsampling::Yuv444, 8)
+            .luma_padding_left(2)
+            .luma_padding_right(2)
+            .luma_padding_top(2)
+            .luma_padding_bottom(2)
+            .build::<u8>()
+            .expect("valid padded frame");
+
+        frame.y_plane.data_mut().fill(255);
+        frame
+            .y_plane
+            .copy_from_slice(&visible)
+            .expect("visible plane data matches dimensions");
+
+        assert_eq!(estimate_plane_noise(&frame.y_plane, 8), Some(0.0));
+    }
 }
