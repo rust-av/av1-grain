@@ -4,13 +4,13 @@ use std::ops::{Add, AddAssign};
 
 use anyhow::anyhow;
 use arrayvec::ArrayVec;
-use v_frame::{frame::Frame, math::clamp, plane::Plane};
+use v_frame::{chroma::ChromaSubsampling, frame::Frame, plane::Plane};
 
 use self::util::{extract_ar_row, get_block_mean, get_noise_var, linsolve, multiply_mat};
-use super::{NoiseStatus, BLOCK_SIZE, BLOCK_SIZE_SQUARED};
+use super::{BLOCK_SIZE, BLOCK_SIZE_SQUARED, NoiseStatus};
 use crate::{
-    diff::solver::util::normalized_cross_correlation, GrainTableSegment, DEFAULT_GRAIN_SEED,
-    NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS,
+    DEFAULT_GRAIN_SEED, GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS,
+    NUM_Y_POINTS, diff::solver::util::normalized_cross_correlation,
 };
 
 const LOW_POLY_NUM_PARAMS: usize = 3;
@@ -37,13 +37,15 @@ impl FlatBlockFinder {
                 let xd = (x as f64 - bs_half) / bs_half;
                 let coords = [yd, xd, 1.0f64];
                 let row = y * BLOCK_SIZE + x;
-                a[LOW_POLY_NUM_PARAMS * row] = yd;
-                a[LOW_POLY_NUM_PARAMS * row + 1] = xd;
-                a[LOW_POLY_NUM_PARAMS * row + 2] = 1.0f64;
+                *unsafe { a.get_unchecked_mut(LOW_POLY_NUM_PARAMS * row) } = yd;
+                *unsafe { a.get_unchecked_mut(LOW_POLY_NUM_PARAMS * row + 1) } = xd;
+                *unsafe { a.get_unchecked_mut(LOW_POLY_NUM_PARAMS * row + 2) } = 1.0f64;
 
                 (0..LOW_POLY_NUM_PARAMS).for_each(|i| {
                     (0..LOW_POLY_NUM_PARAMS).for_each(|j| {
-                        eqns.a[LOW_POLY_NUM_PARAMS * i + j] += coords[i] * coords[j];
+                        *unsafe { eqns.a.get_unchecked_mut(LOW_POLY_NUM_PARAMS * i + j) } +=
+                            *unsafe { coords.get_unchecked(i) }
+                                * *unsafe { coords.get_unchecked(j) };
                     });
                 });
             });
@@ -52,11 +54,12 @@ impl FlatBlockFinder {
         // Lazy inverse using existing equation solver.
         (0..LOW_POLY_NUM_PARAMS).for_each(|i| {
             eqns.b.fill(0.0f64);
-            eqns.b[i] = 1.0f64;
+            *unsafe { eqns.b.get_unchecked_mut(i) } = 1.0f64;
             eqns.solve();
 
             (0..LOW_POLY_NUM_PARAMS).for_each(|j| {
-                a_t_a_inv[j * LOW_POLY_NUM_PARAMS + i] = eqns.x[j];
+                *unsafe { a_t_a_inv.get_unchecked_mut(j * LOW_POLY_NUM_PARAMS + i) } =
+                    *unsafe { eqns.x.get_unchecked(j) };
             });
         });
 
@@ -89,8 +92,8 @@ impl FlatBlockFinder {
         const NORM_WEIGHT: f64 = -12434f64;
         const OFFSET: f64 = 2.5694f64;
 
-        let num_blocks_w = plane.cfg.width.div_ceil(BLOCK_SIZE);
-        let num_blocks_h = plane.cfg.height.div_ceil(BLOCK_SIZE);
+        let num_blocks_w = plane.width().div_ceil(BLOCK_SIZE);
+        let num_blocks_h = plane.height().div_ceil(BLOCK_SIZE);
         let num_blocks = num_blocks_w * num_blocks_h;
         let mut flat_blocks = vec![0u8; num_blocks];
         let mut num_flat = 0;
@@ -145,7 +148,7 @@ impl FlatBlockFinder {
                 let trace = gxx + gyy;
                 let det = gxx.mul_add(gyy, -gxy.powi(2));
                 let e_sub = (trace.mul_add(trace, -4f64 * det)).max(0.).sqrt();
-                let e1 = (trace + e_sub) / 2.0f64;
+                let e1 = f64::midpoint(trace, e_sub);
                 let e2 = (trace - e_sub) / 2.0f64;
                 // Spectral norm
                 let norm = e1;
@@ -163,17 +166,14 @@ impl FlatBlockFinder {
                     ),
                 );
                 // clamp the value to [-25.0, 100.0] to prevent overflow
-                let sum_weights = clamp(sum_weights, -25.0f64, 100.0f64);
+                let sum_weights = sum_weights.clamp(-25.0f64, 100.0f64);
                 let score = (1.0f64 / (1.0f64 + (-sum_weights).exp())) as f32;
-                // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
-                unsafe {
-                    let index = by * num_blocks_w + bx;
-                    *flat_blocks.get_unchecked_mut(index) = if is_flat { 255 } else { 0 };
-                    *scores.get_unchecked_mut(index) = IndexAndScore {
-                        score: if var > VAR_THRESHOLD { score } else { 0f32 },
-                        index,
-                    };
-                }
+                let index = by * num_blocks_w + bx;
+                *unsafe { flat_blocks.get_unchecked_mut(index) } = if is_flat { 255 } else { 0 };
+                *unsafe { scores.get_unchecked_mut(index) } = IndexAndScore {
+                    score: if var > VAR_THRESHOLD { score } else { 0f32 },
+                    index,
+                };
                 if is_flat {
                     num_flat += 1;
                 }
@@ -181,18 +181,16 @@ impl FlatBlockFinder {
         }
 
         scores.sort_unstable_by(|a, b| a.score.partial_cmp(&b.score).expect("Shouldn't be NaN"));
-        // SAFETY: We know the size of `flat_blocks` and `scores` and that we cannot exceed the bounds of it
-        unsafe {
-            let top_nth_percentile = num_blocks * 90 / 100;
-            let score_threshold = scores.get_unchecked(top_nth_percentile).score;
-            for score in &scores {
-                if score.score >= score_threshold {
-                    let block_ref = flat_blocks.get_unchecked_mut(score.index);
-                    if *block_ref == 0 {
-                        num_flat += 1;
-                    }
-                    *block_ref |= 1;
+
+        let top_nth_percentile = num_blocks * 90 / 100;
+        let score_threshold = unsafe { scores.get_unchecked(top_nth_percentile) }.score;
+        for score in &scores {
+            if score.score >= score_threshold {
+                let block_ref = unsafe { flat_blocks.get_unchecked_mut(score.index) };
+                if *block_ref == 0 {
+                    num_flat += 1;
                 }
+                *block_ref |= 1;
             }
         }
 
@@ -209,19 +207,16 @@ impl FlatBlockFinder {
     ) {
         let mut plane_coords = [0f64; LOW_POLY_NUM_PARAMS];
         let mut a_t_a_inv_b = [0f64; LOW_POLY_NUM_PARAMS];
-        let plane_origin = plane.data_origin();
+        let plane_origin = unsafe { plane.data().get_unchecked(plane.geometry().data_origin()..) };
 
         for yi in 0..BLOCK_SIZE {
-            let y = clamp(offset_y + yi, 0, plane.cfg.height - 1);
+            let y = (offset_y + yi).clamp(0, plane.height() - 1);
             for xi in 0..BLOCK_SIZE {
-                let x = clamp(offset_x + xi, 0, plane.cfg.width - 1);
-                // SAFETY: We know the bounds of the plane data and `block_result`
-                // and do not exceed them.
-                unsafe {
-                    *block_result.get_unchecked_mut(yi * BLOCK_SIZE + xi) =
-                        f64::from(*plane_origin.get_unchecked(y * plane.cfg.stride + x))
-                            / BLOCK_NORMALIZATION;
-                }
+                let x = (offset_x + xi).clamp(0, plane.width() - 1);
+                *unsafe { block_result.get_unchecked_mut(yi * BLOCK_SIZE + xi) } =
+                    f64::from(*unsafe {
+                        plane_origin.get_unchecked(y * plane.geometry().stride() + x)
+                    }) / BLOCK_NORMALIZATION;
             }
         }
 
@@ -296,8 +291,9 @@ impl EquationSystem {
         // Set all of the AR coefficients to zero, but try to solve for correlation
         // with the luma channel
         self.x.fill(0f64);
-        if self.a[last * self.n + last].abs() > TOLERANCE {
-            self.x[last] = self.b[last] / self.a[last * self.n + last];
+        if unsafe { self.a.get_unchecked(last * self.n + last) }.abs() > TOLERANCE {
+            *unsafe { self.x.get_unchecked_mut(last) } = *unsafe { self.b.get_unchecked(last) }
+                / *unsafe { self.a.get_unchecked(last * self.n + last) };
         }
     }
 
@@ -323,9 +319,10 @@ impl Add<&EquationSystem> for EquationSystem {
         let n = self.n;
         for i in 0..n {
             for j in 0..n {
-                dest.a[i * n + j] += addend.a[i * n + j];
+                *unsafe { dest.a.get_unchecked_mut(i * n + j) } +=
+                    *unsafe { addend.a.get_unchecked(i * n + j) };
             }
-            dest.b[i] += addend.b[i];
+            *unsafe { dest.b.get_unchecked_mut(i) } += *unsafe { addend.b.get_unchecked(i) };
         }
         dest
     }
@@ -405,15 +402,16 @@ impl NoiseModel {
         denoised: &Frame<u8>,
         flat_blocks: &[u8],
     ) -> NoiseStatus {
-        let num_blocks_w = source.planes[0].cfg.width.div_ceil(BLOCK_SIZE);
-        let num_blocks_h = source.planes[0].cfg.height.div_ceil(BLOCK_SIZE);
+        let num_blocks_w = source.y_plane.width().div_ceil(BLOCK_SIZE);
+        let num_blocks_h = source.y_plane.height().div_ceil(BLOCK_SIZE);
         let mut y_model_different = false;
 
         // Clear the latest equation system
         for i in 0..3 {
-            self.latest_state[i].eqns.clear();
-            self.latest_state[i].num_observations = 0;
-            self.latest_state[i].strength_solver.clear();
+            let state = unsafe { self.latest_state.get_unchecked_mut(i) };
+            state.eqns.clear();
+            state.num_observations = 0;
+            state.strength_solver.clear();
         }
 
         // Check that we have enough flat blocks
@@ -422,19 +420,43 @@ impl NoiseModel {
             return NoiseStatus::Error(anyhow!("Not enough flat blocks to update noise estimate"));
         }
 
-        let frame_dims = (source.planes[0].cfg.width, source.planes[0].cfg.height);
-        for channel in 0..3 {
-            if source.planes[channel].data.is_empty() {
-                // Monochrome source
-                break;
-            }
+        let frame_dims = (source.y_plane.width(), source.y_plane.height());
+        for channel in 0..(if source.subsampling == ChromaSubsampling::Monochrome {
+            1
+        } else {
+            3
+        }) {
+            let source_plane = match channel {
+                0 => &source.y_plane,
+                1 => source
+                    .u_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                2 => source
+                    .v_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                _ => unreachable!(),
+            };
+            let denoised_plane = match channel {
+                0 => &denoised.y_plane,
+                1 => denoised
+                    .u_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                2 => denoised
+                    .v_plane
+                    .as_ref()
+                    .expect("unreachable due to loop bounds"),
+                _ => unreachable!(),
+            };
             let is_chroma = channel > 0;
-            let alt_source = (channel > 0).then(|| &source.planes[0]);
-            let alt_denoised = (channel > 0).then(|| &denoised.planes[0]);
+            let alt_source = (channel > 0).then_some(&source.y_plane);
+            let alt_denoised = (channel > 0).then_some(&denoised.y_plane);
             self.add_block_observations(
                 channel,
-                &source.planes[channel],
-                &denoised.planes[channel],
+                source_plane,
+                denoised_plane,
                 alt_source,
                 alt_denoised,
                 frame_dims,
@@ -442,9 +464,12 @@ impl NoiseModel {
                 num_blocks_w,
                 num_blocks_h,
             );
-            if !self.latest_state[channel].ar_equation_system_solve(is_chroma) {
+
+            if !unsafe { self.latest_state.get_unchecked_mut(channel) }
+                .ar_equation_system_solve(is_chroma)
+            {
                 if is_chroma {
-                    self.latest_state[channel]
+                    unsafe { self.latest_state.get_unchecked_mut(channel) }
                         .eqns
                         .set_chroma_coefficient_fallback_solution();
                 } else {
@@ -456,25 +481,27 @@ impl NoiseModel {
             }
             self.add_noise_std_observations(
                 channel,
-                &source.planes[channel],
-                &denoised.planes[channel],
+                source_plane,
+                denoised_plane,
                 alt_source,
                 frame_dims,
                 flat_blocks,
                 num_blocks_w,
                 num_blocks_h,
             );
-            if !self.latest_state[channel].strength_solver.solve() {
+            if !unsafe { self.latest_state.get_unchecked_mut(channel) }
+                .strength_solver
+                .solve()
+            {
                 return NoiseStatus::Error(anyhow!(
                     "Failed to solve strength solver for latest state"
                 ));
             }
 
             // Check noise characteristics and return if error
-            if channel == 0
-                && self.combined_state[channel].strength_solver.num_equations > 0
-                && self.is_different()
-            {
+            let is_different = self.is_different();
+            let combined_state = unsafe { self.combined_state.get_unchecked_mut(channel) };
+            if channel == 0 && combined_state.strength_solver.num_equations > 0 && is_different {
                 y_model_different = true;
             }
 
@@ -482,12 +509,12 @@ impl NoiseModel {
                 continue;
             }
 
-            self.combined_state[channel].num_observations +=
-                self.latest_state[channel].num_observations;
-            self.combined_state[channel].eqns += &self.latest_state[channel].eqns;
-            if !self.combined_state[channel].ar_equation_system_solve(is_chroma) {
+            combined_state.num_observations +=
+                unsafe { self.latest_state.get_unchecked(channel) }.num_observations;
+            combined_state.eqns += &unsafe { self.latest_state.get_unchecked(channel) }.eqns;
+            if !combined_state.ar_equation_system_solve(is_chroma) {
                 if is_chroma {
-                    self.combined_state[channel]
+                    combined_state
                         .eqns
                         .set_chroma_coefficient_fallback_solution();
                 } else {
@@ -498,10 +525,10 @@ impl NoiseModel {
                 }
             }
 
-            self.combined_state[channel].strength_solver +=
-                &self.latest_state[channel].strength_solver;
+            combined_state.strength_solver +=
+                &unsafe { self.latest_state.get_unchecked(channel) }.strength_solver;
 
-            if !self.combined_state[channel].strength_solver.solve() {
+            if !combined_state.strength_solver.solve() {
                 return NoiseStatus::Error(anyhow!(
                     "Failed to solve strength solver for combined state"
                 ));
@@ -548,12 +575,12 @@ impl NoiseModel {
 
         // Scaling_shift values are in the range [8,11]
         let max_scaling_value_log2 =
-            clamp((max_scaling_value.log2() + 1f64).floor() as u8, 2u8, 5u8);
+            ((max_scaling_value.log2() + 1f64).floor() as u8).clamp(2u8, 5u8);
         let scale_factor = f64::from(1u32 << (8u8 - max_scaling_value_log2));
         let map_scaling_point = |p: [f64; 2]| {
             [
                 (p[0] + 0.5f64) as u8,
-                clamp(scale_factor.mul_add(p[1], 0.5f64) as i32, 0i32, 255i32) as u8,
+                (scale_factor.mul_add(p[1], 0.5f64) as i32).clamp(0i32, 255i32) as u8,
             ]
         };
 
@@ -577,29 +604,30 @@ impl NoiseModel {
         let mut y_corr = [0f64; 2];
         let mut avg_luma_strength = 0f64;
         for c in 0..3 {
-            let eqns = &self.combined_state[c].eqns;
+            let eqns = &unsafe { self.combined_state.get_unchecked(c) }.eqns;
             for i in 0..n_coeff {
-                if eqns.x[i] > max_coeff {
-                    max_coeff = eqns.x[i];
+                let xi = *unsafe { eqns.x.get_unchecked(i) };
+                if xi > max_coeff {
+                    max_coeff = xi;
                 }
-                if eqns.x[i] < min_coeff {
-                    min_coeff = eqns.x[i];
+                if xi < min_coeff {
+                    min_coeff = xi;
                 }
             }
 
             // Since the correlation between luma/chroma was computed in an already
             // scaled space, we adjust it in the un-scaled space.
-            let solver = &self.combined_state[c].strength_solver;
+            let solver = &unsafe { self.combined_state.get_unchecked(c) }.strength_solver;
             // Compute a weighted average of the strength for the channel.
             let mut average_strength = 0f64;
             let mut total_weight = 0f64;
             for i in 0..solver.eqns.n {
                 let mut w = 0f64;
                 for j in 0..solver.eqns.n {
-                    w += solver.eqns.a[i * solver.eqns.n + j];
+                    w += *unsafe { solver.eqns.a.get_unchecked(i * solver.eqns.n + j) };
                 }
                 w = w.sqrt();
-                average_strength += solver.eqns.x[i] * w;
+                average_strength += *unsafe { solver.eqns.x.get_unchecked(i) } * w;
                 total_weight += w;
             }
             if total_weight.abs() < f64::EPSILON {
@@ -610,19 +638,19 @@ impl NoiseModel {
             if c == 0 {
                 avg_luma_strength = average_strength;
             } else {
-                y_corr[c - 1] = avg_luma_strength * eqns.x[n_coeff] / average_strength;
-                max_coeff = max_coeff.max(y_corr[c - 1]);
-                min_coeff = min_coeff.min(y_corr[c - 1]);
+                let y_corr_cur = unsafe { y_corr.get_unchecked_mut(c - 1) };
+                *y_corr_cur = avg_luma_strength * *unsafe { eqns.x.get_unchecked(n_coeff) }
+                    / average_strength;
+                max_coeff = max_coeff.max(*y_corr_cur);
+                min_coeff = min_coeff.min(*y_corr_cur);
             }
         }
 
         // Shift value: AR coeffs range (values 6-9)
         // 6: [-2, 2),  7: [-1, 1), 8: [-0.5, 0.5), 9: [-0.25, 0.25)
-        let ar_coeff_shift = clamp(
-            7i32 - (1.0f64 + max_coeff.log2().floor()).max((-min_coeff).log2().ceil()) as i32,
-            6i32,
-            9i32,
-        ) as u8;
+        let ar_coeff_shift = (7i32
+            - (1.0f64 + max_coeff.log2().floor()).max((-min_coeff).log2().ceil()) as i32)
+            .clamp(6i32, 9i32) as u8;
         let scale_ar_coeff = f64::from(1u16 << ar_coeff_shift);
         let ar_coeffs_y = self.get_ar_coeffs_y(n_coeff, scale_ar_coeff);
         let ar_coeffs_cb = self.get_ar_coeffs_uv(1, n_coeff, scale_ar_coeff, y_corr);
@@ -657,8 +685,8 @@ impl NoiseModel {
 
     pub fn save_latest(&mut self) {
         for c in 0..3 {
-            let latest_state = &self.latest_state[c];
-            let combined_state = &mut self.combined_state[c];
+            let latest_state = unsafe { self.latest_state.get_unchecked(c) };
+            let combined_state = unsafe { self.combined_state.get_unchecked_mut(c) };
             combined_state.eqns.copy_from(&latest_state.eqns);
             combined_state
                 .strength_solver
@@ -683,7 +711,8 @@ impl NoiseModel {
         let mut coeffs = ArrayVec::new();
         let eqns = &self.combined_state[0].eqns;
         for i in 0..n_coeff {
-            coeffs.push(clamp((scale_ar_coeff * eqns.x[i]).round() as i32, -128i32, 127i32) as i8);
+            let xi = *unsafe { eqns.x.get_unchecked(i) };
+            coeffs.push(((scale_ar_coeff * xi).round() as i32).clamp(-128i32, 127i32) as i8);
         }
         coeffs
     }
@@ -698,15 +727,15 @@ impl NoiseModel {
     ) -> ArrayVec<i8, NUM_UV_COEFFS> {
         assert!(n_coeff <= NUM_Y_COEFFS);
         let mut coeffs = ArrayVec::new();
-        let eqns = &self.combined_state[channel].eqns;
+        let eqns = &unsafe { self.combined_state.get_unchecked(channel) }.eqns;
         for i in 0..n_coeff {
-            coeffs.push(clamp((scale_ar_coeff * eqns.x[i]).round() as i32, -128i32, 127i32) as i8);
+            let xi = *unsafe { eqns.x.get_unchecked(i) };
+            coeffs.push(((scale_ar_coeff * xi).round() as i32).clamp(-128i32, 127i32) as i8);
         }
-        coeffs.push(clamp(
-            (scale_ar_coeff * y_corr[channel - 1]).round() as i32,
-            -128i32,
-            127i32,
-        ) as i8);
+        coeffs.push(
+            ((scale_ar_coeff * *unsafe { y_corr.get_unchecked(channel - 1) }).round() as i32)
+                .clamp(-128i32, 127i32) as i8,
+        );
         coeffs
     }
 
@@ -734,10 +763,13 @@ impl NoiseModel {
         for j in 0..latest_eqns.n {
             let mut weight = 0.0f64;
             for i in 0..latest_eqns.n {
-                weight += latest_eqns.a[i * latest_eqns.n + j];
+                weight += *unsafe { latest_eqns.a.get_unchecked(i * latest_eqns.n + j) };
             }
             weight = weight.sqrt();
-            diff += weight * (latest_eqns.x[j] - combined_eqns.x[j]).abs();
+            diff += weight
+                * (*unsafe { latest_eqns.x.get_unchecked(j) }
+                    - *unsafe { combined_eqns.x.get_unchecked(j) })
+                .abs();
             total_weight += weight;
         }
 
@@ -758,77 +790,95 @@ impl NoiseModel {
         num_blocks_h: usize,
     ) {
         let num_coords = self.n;
-        let state = &mut self.latest_state[channel];
+        let state = unsafe { self.latest_state.get_unchecked_mut(channel) };
         let a = &mut state.eqns.a;
         let b = &mut state.eqns.b;
         let mut buffer = vec![0f64; num_coords + 1].into_boxed_slice();
         let n = state.eqns.n;
-        let block_w = BLOCK_SIZE >> source.cfg.xdec;
-        let block_h = BLOCK_SIZE >> source.cfg.ydec;
+        let block_w = BLOCK_SIZE / usize::from(source.geometry().subsampling_x());
+        let block_h = BLOCK_SIZE / usize::from(source.geometry().subsampling_y());
 
-        let dec = (source.cfg.xdec, source.cfg.ydec);
-        let stride = source.cfg.stride;
-        let source_origin = source.data_origin();
-        let denoised_origin = denoised.data_origin();
-        let alt_stride = alt_source.map_or(0, |s| s.cfg.stride);
-        let alt_source_origin = alt_source.map(|s| s.data_origin());
-        let alt_denoised_origin = alt_denoised.map(|s| s.data_origin());
+        let dec = (
+            usize::from(source.geometry().subsampling_x()) >> 1,
+            usize::from(source.geometry().subsampling_y()) >> 1,
+        );
+        let stride = source.geometry().stride();
+        let source_origin = unsafe {
+            source
+                .data()
+                .get_unchecked(source.geometry().data_origin()..)
+        };
+        let denoised_origin = unsafe {
+            denoised
+                .data()
+                .get_unchecked(denoised.geometry().data_origin()..)
+        };
+        let alt_stride = alt_source.map_or(0, |s| s.geometry().stride());
+        let alt_source_origin =
+            alt_source.map(|s| unsafe { s.data().get_unchecked(s.geometry().data_origin()..) });
+        let alt_denoised_origin =
+            alt_denoised.map(|s| unsafe { s.data().get_unchecked(s.geometry().data_origin()..) });
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
             for bx in 0..num_blocks_w {
-                // SAFETY: We know the indexes we provide do not overflow the data bounds
-                unsafe {
-                    let flat_block_ptr = flat_blocks.as_ptr().add(by * num_blocks_w + bx);
-                    let x_o = bx * block_w;
-                    if *flat_block_ptr == 0 {
-                        continue;
-                    }
-                    let y_start = if by > 0 && *flat_block_ptr.sub(num_blocks_w) > 0 {
+                let flat_block_index = by * num_blocks_w + bx;
+                let flat_block = unsafe { flat_blocks.get_unchecked(flat_block_index) };
+                let x_o = bx * block_w;
+                if *flat_block == 0 {
+                    continue;
+                }
+                let y_start = if by > 0
+                    && *unsafe { flat_blocks.get_unchecked(flat_block_index - num_blocks_w) } > 0
+                {
+                    0
+                } else {
+                    NOISE_MODEL_LAG
+                };
+                let x_start =
+                    if bx > 0 && *unsafe { flat_blocks.get_unchecked(flat_block_index - 1) } > 0 {
                         0
                     } else {
                         NOISE_MODEL_LAG
                     };
-                    let x_start = if bx > 0 && *flat_block_ptr.sub(1) > 0 {
-                        0
+                let y_end = ((frame_dims.1 >> dec.1) - by * block_h).min(block_h);
+                let x_end = ((frame_dims.0 >> dec.0) - bx * block_w - NOISE_MODEL_LAG).min(
+                    if bx + 1 < num_blocks_w
+                        && *unsafe { flat_blocks.get_unchecked(flat_block_index + 1) } > 0
+                    {
+                        block_w
                     } else {
-                        NOISE_MODEL_LAG
-                    };
-                    let y_end = ((frame_dims.1 >> dec.1) - by * block_h).min(block_h);
-                    let x_end = ((frame_dims.0 >> dec.0) - bx * block_w - NOISE_MODEL_LAG).min(
-                        if bx + 1 < num_blocks_w && *flat_block_ptr.add(1) > 0 {
-                            block_w
-                        } else {
-                            block_w - NOISE_MODEL_LAG
-                        },
-                    );
-                    for y in y_start..y_end {
-                        for x in x_start..x_end {
-                            let val = extract_ar_row(
-                                &self.coords,
-                                num_coords,
-                                source_origin,
-                                denoised_origin,
-                                stride,
-                                dec,
-                                alt_source_origin,
-                                alt_denoised_origin,
-                                alt_stride,
-                                x + x_o,
-                                y + y_o,
-                                &mut buffer,
-                            );
-                            for i in 0..n {
-                                for j in 0..n {
-                                    *a.get_unchecked_mut(i * n + j) += (*buffer.get_unchecked(i)
-                                        * *buffer.get_unchecked(j))
+                        block_w - NOISE_MODEL_LAG
+                    },
+                );
+                for y in y_start..y_end {
+                    for x in x_start..x_end {
+                        let val = extract_ar_row(
+                            &self.coords,
+                            num_coords,
+                            source_origin,
+                            denoised_origin,
+                            stride,
+                            dec,
+                            alt_source_origin,
+                            alt_denoised_origin,
+                            alt_stride,
+                            x + x_o,
+                            y + y_o,
+                            &mut buffer,
+                        );
+                        for i in 0..n {
+                            for j in 0..n {
+                                *unsafe { a.get_unchecked_mut(i * n + j) } +=
+                                    (*unsafe { buffer.get_unchecked(i) }
+                                        * *unsafe { buffer.get_unchecked(j) })
                                         / BLOCK_NORMALIZATION.powi(2);
-                                }
-                                *b.get_unchecked_mut(i) +=
-                                    (*buffer.get_unchecked(i) * val) / BLOCK_NORMALIZATION.powi(2);
                             }
-                            state.num_observations += 1;
+                            *unsafe { b.get_unchecked_mut(i) } +=
+                                (*unsafe { buffer.get_unchecked(i) } * val)
+                                    / BLOCK_NORMALIZATION.powi(2);
                         }
+                        state.num_observations += 1;
                     }
                 }
             }
@@ -847,37 +897,42 @@ impl NoiseModel {
         num_blocks_w: usize,
         num_blocks_h: usize,
     ) {
-        let coeffs = &self.latest_state[channel].eqns.x;
         let num_coords = self.n;
         let luma_gain = self.latest_state[0].ar_gain;
-        let noise_gain = self.latest_state[channel].ar_gain;
-        let block_w = BLOCK_SIZE >> source.cfg.xdec;
-        let block_h = BLOCK_SIZE >> source.cfg.ydec;
+        let noise_gain = unsafe { self.latest_state.get_unchecked(channel) }.ar_gain;
+        let block_w = BLOCK_SIZE / usize::from(source.geometry().subsampling_x());
+        let block_h = BLOCK_SIZE / usize::from(source.geometry().subsampling_y());
 
         for by in 0..num_blocks_h {
             let y_o = by * block_h;
             for bx in 0..num_blocks_w {
                 let x_o = bx * block_w;
-                if flat_blocks[by * num_blocks_w + bx] == 0 {
+                if *unsafe { flat_blocks.get_unchecked(by * num_blocks_w + bx) } == 0 {
                     continue;
                 }
-                let num_samples_h = ((frame_dims.1 >> source.cfg.ydec) - by * block_h).min(block_h);
-                let num_samples_w = ((frame_dims.0 >> source.cfg.xdec) - bx * block_w).min(block_w);
+                let num_samples_h = ((frame_dims.1
+                    / usize::from(source.geometry().subsampling_y()))
+                    - by * block_h)
+                    .min(block_h);
+                let num_samples_w = ((frame_dims.0
+                    / usize::from(source.geometry().subsampling_x()))
+                    - bx * block_w)
+                    .min(block_w);
                 // Make sure that we have a reasonable amount of samples to consider the
                 // block
                 if num_samples_w * num_samples_h > BLOCK_SIZE {
                     let block_mean = get_block_mean(
                         alt_source.unwrap_or(source),
                         frame_dims,
-                        x_o << source.cfg.xdec,
-                        y_o << source.cfg.ydec,
+                        x_o << (usize::from(source.geometry().subsampling_x()) >> 1),
+                        y_o << (usize::from(source.geometry().subsampling_y()) >> 1),
                     );
                     let noise_var = get_noise_var(
                         source,
                         denoised,
                         (
-                            frame_dims.0 >> source.cfg.xdec,
-                            frame_dims.1 >> source.cfg.ydec,
+                            frame_dims.0 >> (usize::from(source.geometry().subsampling_x()) >> 1),
+                            frame_dims.1 >> (usize::from(source.geometry().subsampling_y()) >> 1),
                         ),
                         x_o,
                         y_o,
@@ -893,7 +948,8 @@ impl NoiseModel {
                         0f64
                     };
                     let corr = if channel > 0 {
-                        coeffs[num_coords]
+                        let coeffs = &unsafe { self.latest_state.get_unchecked(channel) }.eqns.x;
+                        *unsafe { coeffs.get_unchecked(num_coords) }
                     } else {
                         0f64
                     };
@@ -907,7 +963,7 @@ impl NoiseModel {
                         .max((corr * luma_strength).mul_add(-(corr * luma_strength), noise_var))
                         .sqrt();
                     let adjusted_strength = uncorr_std / noise_gain;
-                    self.latest_state[channel]
+                    unsafe { self.latest_state.get_unchecked_mut(channel) }
                         .strength_solver
                         .add_measurement(block_mean, adjusted_strength);
                 }
@@ -953,7 +1009,8 @@ impl NoiseModelState {
         let mut var = 0f64;
         let n_adjusted = self.eqns.n - usize::from(is_chroma);
         for i in 0..n_adjusted {
-            var += self.eqns.a[i * self.eqns.n + i] / self.num_observations as f64;
+            var += *unsafe { self.eqns.a.get_unchecked(i * self.eqns.n + i) }
+                / self.num_observations as f64;
         }
         var /= n_adjusted as f64;
 
@@ -964,11 +1021,13 @@ impl NoiseModelState {
         // from b. E(y^2) = <b - A(:, end)*x(end), x>
         let mut sum_covar = 0f64;
         for i in 0..n_adjusted {
-            let mut bi = self.eqns.b[i];
+            let mut bi = *unsafe { self.eqns.b.get_unchecked(i) };
             if is_chroma {
-                bi -= self.eqns.a[i * self.eqns.n + n_adjusted] * self.eqns.x[n_adjusted];
+                bi -= *unsafe { self.eqns.a.get_unchecked(i * self.eqns.n + n_adjusted) }
+                    * *unsafe { self.eqns.x.get_unchecked(n_adjusted) };
             }
-            sum_covar += (bi * self.eqns.x[i]) / self.num_observations as f64;
+            sum_covar +=
+                (bi * *unsafe { self.eqns.x.get_unchecked(i) }) / self.num_observations as f64;
         }
 
         // Now, get an estimate of the variance of uncorrelated noise signal and use
@@ -1005,12 +1064,12 @@ impl StrengthSolver {
         let a = bin - bin_i0 as f64;
         let n = self.num_bins;
         let eqns = &mut self.eqns;
-        eqns.a[bin_i0 * n + bin_i0] += (1f64 - a).powi(2);
-        eqns.a[bin_i1 * n + bin_i0] += a * (1f64 - a);
-        eqns.a[bin_i1 * n + bin_i1] += a.powi(2);
-        eqns.a[bin_i0 * n + bin_i1] += (1f64 - a) * a;
-        eqns.b[bin_i0] += (1f64 - a) * noise_std;
-        eqns.b[bin_i1] += a * noise_std;
+        *unsafe { eqns.a.get_unchecked_mut(bin_i0 * n + bin_i0) } += (1f64 - a).powi(2);
+        *unsafe { eqns.a.get_unchecked_mut(bin_i1 * n + bin_i0) } += a * (1f64 - a);
+        *unsafe { eqns.a.get_unchecked_mut(bin_i1 * n + bin_i1) } += a.powi(2);
+        *unsafe { eqns.a.get_unchecked_mut(bin_i0 * n + bin_i1) } += (1f64 - a) * a;
+        *unsafe { eqns.b.get_unchecked_mut(bin_i0) } += (1f64 - a) * noise_std;
+        *unsafe { eqns.b.get_unchecked_mut(bin_i1) } += a * noise_std;
         self.total += noise_std;
         self.num_equations += 1;
     }
@@ -1025,16 +1084,16 @@ impl StrengthSolver {
         for i in 0..n {
             let i_lo = i.saturating_sub(1);
             let i_hi = (n - 1).min(i + 1);
-            self.eqns.a[i * n + i_lo] -= alpha;
-            self.eqns.a[i * n + i] += 2f64 * alpha;
-            self.eqns.a[i * n + i_hi] -= alpha;
+            *unsafe { self.eqns.a.get_unchecked_mut(i * n + i_lo) } -= alpha;
+            *unsafe { self.eqns.a.get_unchecked_mut(i * n + i) } += 2f64 * alpha;
+            *unsafe { self.eqns.a.get_unchecked_mut(i * n + i_hi) } -= alpha;
         }
 
         // Small regularization to give average noise strength
         let mean = self.total / self.num_equations as f64;
         for i in 0..n {
-            self.eqns.a[i * n + i] += 1f64 / 8192f64;
-            self.eqns.b[i] += mean / 8192f64;
+            *unsafe { self.eqns.a.get_unchecked_mut(i * n + i) } += 1f64 / 8192f64;
+            *unsafe { self.eqns.b.get_unchecked_mut(i) } += mean / 8192f64;
         }
         let result = self.eqns.solve();
         self.eqns.a = old_a;
@@ -1047,8 +1106,9 @@ impl StrengthSolver {
 
         let mut lut = NoiseStrengthLut::new(self.num_bins);
         for i in 0..self.num_bins {
-            lut.points[i][0] = self.get_center(i);
-            lut.points[i][1] = self.eqns.x[i];
+            (unsafe { lut.points.get_unchecked_mut(i) })[0] = self.get_center(i);
+            (unsafe { lut.points.get_unchecked_mut(i) })[1] =
+                *unsafe { self.eqns.x.get_unchecked(i) };
         }
 
         let mut residual = vec![0.0f64; self.num_bins];
@@ -1059,12 +1119,15 @@ impl StrengthSolver {
         while lut.points.len() > 2 {
             let mut min_index = 1usize;
             for j in 1..(lut.points.len() - 1) {
-                if residual[j] < residual[min_index] {
+                if *unsafe { residual.get_unchecked(j) }
+                    < *unsafe { residual.get_unchecked(min_index) }
+                {
                     min_index = j;
                 }
             }
-            let dx = lut.points[min_index + 1][0] - lut.points[min_index - 1][0];
-            let avg_residual = residual[min_index] / dx;
+            let dx = unsafe { lut.points.get_unchecked(min_index + 1) }[0]
+                - unsafe { lut.points.get_unchecked(min_index - 1) }[0];
+            let avg_residual = unsafe { residual.get_unchecked(min_index) } / dx;
             if lut.points.len() <= max_output_points && avg_residual > TOLERANCE {
                 break;
             }
@@ -1087,7 +1150,10 @@ impl StrengthSolver {
         let bin_i0 = bin.floor() as usize;
         let bin_i1 = (self.num_bins - 1).min(bin_i0 + 1);
         let a = bin - bin_i0 as f64;
-        (1f64 - a).mul_add(self.eqns.x[bin_i0], a * self.eqns.x[bin_i1])
+        (1f64 - a).mul_add(
+            *unsafe { self.eqns.x.get_unchecked(bin_i0) },
+            a * *unsafe { self.eqns.x.get_unchecked(bin_i1) },
+        )
     }
 
     pub fn clear(&mut self) {
@@ -1099,7 +1165,7 @@ impl StrengthSolver {
     #[must_use]
     fn get_bin_index(&self, value: f64) -> f64 {
         let max = 255f64;
-        let val = clamp(value, 0f64, max);
+        let val = value.clamp(0f64, max);
         (self.num_bins - 1) as f64 * val / max
     }
 
@@ -1113,22 +1179,31 @@ impl StrengthSolver {
         let dx = 255f64 / self.num_bins as f64;
         #[allow(clippy::needless_range_loop)]
         for i in start.max(1)..end.min(lut.points.len() - 1) {
-            let lower = 0usize.max(self.get_bin_index(lut.points[i - 1][0]).floor() as usize);
-            let upper =
-                (self.num_bins - 1).min(self.get_bin_index(lut.points[i + 1][0]).ceil() as usize);
+            let lower = self
+                .get_bin_index(unsafe { lut.points.get_unchecked(i - 1) }[0])
+                .floor() as usize;
+            let upper = (self.num_bins - 1).min(
+                self.get_bin_index(unsafe { lut.points.get_unchecked(i + 1) }[0])
+                    .ceil() as usize,
+            );
             let mut r = 0f64;
             for j in lower..=upper {
                 let x = self.get_center(j);
-                if x < lut.points[i - 1][0] || x >= lut.points[i + 1][0] {
+                if x < unsafe { lut.points.get_unchecked(i - 1) }[0]
+                    || x >= unsafe { lut.points.get_unchecked(i + 1) }[0]
+                {
                     continue;
                 }
 
-                let y = self.eqns.x[j];
-                let a = (x - lut.points[i - 1][0]) / (lut.points[i + 1][0] - lut.points[i - 1][0]);
-                let estimate_y = lut.points[i - 1][1].mul_add(1f64 - a, lut.points[i + 1][1] * a);
+                let y = *unsafe { self.eqns.x.get_unchecked(j) };
+                let a = (x - unsafe { lut.points.get_unchecked(i - 1) }[0])
+                    / (unsafe { lut.points.get_unchecked(i + 1) }[0]
+                        - unsafe { lut.points.get_unchecked(i - 1) }[0]);
+                let estimate_y = unsafe { lut.points.get_unchecked(i - 1) }[1]
+                    .mul_add(1f64 - a, unsafe { lut.points.get_unchecked(i + 1) }[1] * a);
                 r += (y - estimate_y).abs();
             }
-            residual[i] = r * dx;
+            *unsafe { residual.get_unchecked_mut(i) } = r * dx;
         }
     }
 

@@ -9,6 +9,7 @@
 
 use arrayvec::ArrayVec;
 use nom::{
+    AsChar, Compare, Err as NomErr, IResult, Input, Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1, line_ending, multispace0, multispace1, space0, space1},
@@ -16,7 +17,6 @@ use nom::{
     error::{Error as NomError, ErrorKind, FromExternalError, ParseError},
     multi::{many1, separated_list0, separated_list1},
     sequence::{delimited, preceded},
-    AsChar, Compare, Err as NomErr, IResult, Input, Parser,
 };
 
 use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS};
@@ -140,28 +140,31 @@ fn e_params(input: &str) -> IResult<&str, EParams> {
                 ));
             }
             let parsed = EParams {
-                start: items[0].parse().map_err(|_e| {
+                start: unsafe { items.get_unchecked(0) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse start_time",
                     ))
                 })?,
-                end: items[1].parse().map_err(|_e| {
+                end: unsafe { items.get_unchecked(1) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse end_time",
                     ))
                 })?,
-                apply: items[2].parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse apply_grain",
-                    ))
-                })? > 0,
-                seed: items[3].parse().map_err(|_e| {
+                apply: unsafe { items.get_unchecked(2) }
+                    .parse::<u8>()
+                    .map_err(|_e| {
+                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                            input,
+                            ErrorKind::Digit,
+                            "Failed to parse apply_grain",
+                        ))
+                    })?
+                    > 0,
+                seed: unsafe { items.get_unchecked(3) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
@@ -220,84 +223,89 @@ fn p_params(input: &str) -> IResult<&str, PParams> {
             }
 
             let parsed = PParams {
-                ar_coeff_lag: items[0].parse().map_err(|_e| {
+                ar_coeff_lag: unsafe { items.get_unchecked(0) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse ar_coeff_lag",
                     ))
                 })?,
-                ar_coeff_shift: items[1].parse().map_err(|_e| {
+                ar_coeff_shift: unsafe { items.get_unchecked(1) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse ar_coeff_shift",
                     ))
                 })?,
-                grain_scale_shift: items[2].parse().map_err(|_e| {
+                grain_scale_shift: unsafe { items.get_unchecked(2) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse grain_scale_shift",
                     ))
                 })?,
-                scaling_shift: items[3].parse().map_err(|_e| {
+                scaling_shift: unsafe { items.get_unchecked(3) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse scaling_shift",
                     ))
                 })?,
-                chroma_scaling_from_luma: items[4].parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse chroma_scaling_from_luma",
-                    ))
-                })? > 0,
-                overlap_flag: items[5].parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse overlap_flag",
-                    ))
-                })? > 0,
-                cb_mult: items[6].parse().map_err(|_e| {
+                chroma_scaling_from_luma: unsafe { items.get_unchecked(4) }.parse::<u8>().map_err(
+                    |_e| {
+                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                            input,
+                            ErrorKind::Digit,
+                            "Failed to parse chroma_scaling_from_luma",
+                        ))
+                    },
+                )? > 0,
+                overlap_flag: unsafe { items.get_unchecked(5) }
+                    .parse::<u8>()
+                    .map_err(|_e| {
+                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
+                            input,
+                            ErrorKind::Digit,
+                            "Failed to parse overlap_flag",
+                        ))
+                    })?
+                    > 0,
+                cb_mult: unsafe { items.get_unchecked(6) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_mult",
                     ))
                 })?,
-                cb_luma_mult: items[7].parse().map_err(|_e| {
+                cb_luma_mult: unsafe { items.get_unchecked(7) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_luma_mult",
                     ))
                 })?,
-                cb_offset: items[8].parse().map_err(|_e| {
+                cb_offset: unsafe { items.get_unchecked(8) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cb_offset",
                     ))
                 })?,
-                cr_mult: items[9].parse().map_err(|_e| {
+                cr_mult: unsafe { items.get_unchecked(9) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_mult",
                     ))
                 })?,
-                cr_luma_mult: items[10].parse().map_err(|_e| {
+                cr_luma_mult: unsafe { items.get_unchecked(10) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
                         "Failed to parse cr_luma_mult",
                     ))
                 })?,
-                cr_offset: items[11].parse().map_err(|_e| {
+                cr_offset: unsafe { items.get_unchecked(11) }.parse().map_err(|_e| {
                     NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
                         input,
                         ErrorKind::Digit,
@@ -357,7 +365,7 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
     )
     .parse(input)?;
 
-    let len = values[0] as usize;
+    let len = *unsafe { values.get_unchecked(0) } as usize;
     if values.len() != len * 2 + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
             input,
@@ -372,9 +380,15 @@ fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
 
     Ok((
         input,
-        values[1..]
+        unsafe { values.get_unchecked(1..) }
             .chunks_exact(2)
-            .map(|chunk| [chunk[0], chunk[1]])
+            .map(|chunk| {
+                // we know the chunk is exactly length 2,
+                // but `chunks_exact` doesn't specify that in the type definition
+                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
+                    chunk.get_unchecked(1)
+                }]
+            })
             .collect(),
     ))
 }
@@ -401,7 +415,7 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
     )
     .parse(input)?;
 
-    let len = values[0] as usize;
+    let len = *unsafe { values.get_unchecked(0) } as usize;
     if values.len() != len * 2 + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
             input,
@@ -416,9 +430,15 @@ fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 
     Ok((
         input,
-        values[1..]
+        unsafe { values.get_unchecked(1..) }
             .chunks_exact(2)
-            .map(|chunk| [chunk[0], chunk[1]])
+            .map(|chunk| {
+                // we know the chunk is exactly length 2,
+                // but `chunks_exact` doesn't specify that in the type definition
+                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
+                    chunk.get_unchecked(1)
+                }]
+            })
             .collect(),
     ))
 }
@@ -445,7 +465,7 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
     )
     .parse(input)?;
 
-    let len = values[0] as usize;
+    let len = *unsafe { values.get_unchecked(0) } as usize;
     if values.len() != len * 2 + 1 {
         return Err(NomErr::Failure(NomError::from_external_error(
             input,
@@ -460,9 +480,15 @@ fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
 
     Ok((
         input,
-        values[1..]
+        unsafe { values.get_unchecked(1..) }
             .chunks_exact(2)
-            .map(|chunk| [chunk[0], chunk[1]])
+            .map(|chunk| {
+                // we know the chunk is exactly length 2,
+                // but `chunks_exact` doesn't specify that in the type definition
+                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
+                    chunk.get_unchecked(1)
+                }]
+            })
             .collect(),
     ))
 }

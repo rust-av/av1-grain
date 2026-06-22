@@ -1,9 +1,6 @@
-use std::{f64::consts::PI, mem::size_of};
+use std::f64::consts::PI;
 
-use v_frame::{
-    plane::Plane,
-    prelude::{CastFromPrimitive, Pixel},
-};
+use v_frame::{pixel::Pixel, plane::Plane};
 
 /// Estimates the amount of noise within a plane.
 /// Returns `None` if a reliable estimate cannot be obtained
@@ -17,6 +14,7 @@ use v_frame::{
 /// # Panics
 /// - If called with a `bit_depth` not between `8..=16`
 #[must_use]
+#[inline]
 pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Option<f64> {
     const EDGE_THRESHOLD: u16 = 50;
 
@@ -28,25 +26,31 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
         unimplemented!("Bit depths greater than 16 are not currently supported");
     }
 
-    let width = plane.cfg.width;
-    let height = plane.cfg.height;
-    let stride = plane.cfg.stride;
+    let width = plane.width();
+    let height = plane.height();
+    let data_origin = plane.geometry().data_origin();
+    let stride = plane.geometry().stride();
+    let data = plane.data();
 
     let mut accum = 0u64;
     let mut count = 0u64;
     for i in 1..(height - 1) {
         for j in 1..(width - 1) {
             // Setup a small 3x3 matrix.
-            let center_idx = (i * stride + j) as isize;
             let mut mat = [[0i16; 3]; 3];
             for ii in -1isize..=1isize {
                 for jj in -1isize..=1isize {
-                    let idx = (center_idx + ii * stride as isize + jj) as usize;
-                    mat[(ii + 1) as usize][(jj + 1) as usize] = if size_of::<T>() == 1 {
-                        i16::cast_from(plane.data_origin()[idx])
-                    } else {
-                        (u16::cast_from(plane.data_origin()[idx]) >> (bit_depth - 8usize)) as i16
-                    };
+                    unsafe {
+                        let idx = (i * stride + j) as isize + ii * stride as isize + jj;
+                        let pix: u16 = (*data.get_unchecked(data_origin + idx as usize)).into();
+
+                        *mat.get_unchecked_mut((ii + 1) as usize)
+                            .get_unchecked_mut((jj + 1) as usize) = if size_of::<T>() == 1 {
+                            pix as i16
+                        } else {
+                            (pix >> (bit_depth - 8)) as i16
+                        };
+                    }
                 }
             }
 
@@ -68,4 +72,31 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
     }
 
     (count >= 16).then(|| accum as f64 / (6u64 * count) as f64 * (PI / 2f64).sqrt())
+}
+
+#[cfg(test)]
+mod tests {
+    use v_frame::{chroma::ChromaSubsampling, frame::FrameBuilder};
+
+    use super::estimate_plane_noise;
+
+    #[test]
+    fn estimate_uses_visible_pixels_when_plane_has_padding() {
+        let visible = vec![10u8; 6 * 6];
+        let mut frame = FrameBuilder::new(6, 6, ChromaSubsampling::Yuv444, 8)
+            .luma_padding_left(2)
+            .luma_padding_right(2)
+            .luma_padding_top(2)
+            .luma_padding_bottom(2)
+            .build::<u8>()
+            .expect("valid padded frame");
+
+        frame.y_plane.data_mut().fill(255);
+        frame
+            .y_plane
+            .copy_from_slice(&visible)
+            .expect("visible plane data matches dimensions");
+
+        assert_eq!(estimate_plane_noise(&frame.y_plane, 8), Some(0.0));
+    }
 }

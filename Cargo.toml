@@ -1,8 +1,8 @@
 [package]
 name = "av1-grain"
-version = "0.2.5"
-edition = "2021"
-rust-version = "1.80.1"
+version = "0.4.2"
+edition = "2024"
+rust-version = "1.95"
 # license = "BSD-2-Clause AND AOMPL-1.0" Wait for AOMPL-1.0 to be a valid SPDX expression
 license-file = "LICENSE"
 description = "Helpers for generating and parsing AV1 film grain data"
@@ -16,9 +16,9 @@ anyhow = "1.0.58"
 arrayvec = "0.7.2"
 log = "0.4.17"
 nom = { version = "8.0.0", optional = true }
-num-rational = { version = "0.4.1", optional = true }
+num-rational = { version = "0.4.1", optional = true, default-features = false }
 serde = { version = "1.0.140", optional = true, features = ["derive"] }
-v_frame = { version = "0.3.0", optional = true }
+v_frame = { version = "0.7", optional = true, features = ["padding_api"] }
 
 [dev-dependencies]
 quickcheck = "1.0.3"
@@ -65,7 +65,6 @@ ref_option = "warn"
 set_contains_or_insert = "warn"
 stable_sort_primitive = "warn"
 string_lit_chars_any = "warn"
-suboptimal_flops = "warn"
 trivial_regex = "warn"
 trivially_copy_pass_by_ref = "warn"
 unnecessary_box_returns = "warn"
@@ -150,7 +149,6 @@ string_slice = "warn"
 suspicious_operation_groupings = "warn"
 suspicious_xor_used_as_pow = "warn"
 transmute_undefined_repr = "warn"
-undocumented_unsafe_blocks = "warn"
 unnecessary_debug_formatting = "warn"
 unwrap_used = "warn"
 # Annoyances

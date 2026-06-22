@@ -74,7 +74,7 @@ use std::{
 
 use arrayvec::ArrayVec;
 
-use crate::{GrainTableSegment, ScalingPoints, DEFAULT_GRAIN_SEED, NUM_Y_POINTS};
+use crate::{DEFAULT_GRAIN_SEED, GrainTableSegment, NUM_Y_POINTS, ScalingPoints};
 
 const PQ_M1: f32 = 2610. / 16384.;
 const PQ_M2: f32 = 128. * 2523. / 4096.;
@@ -119,6 +119,8 @@ pub struct NoiseGenArgs {
     pub width: u32,
     pub height: u32,
     pub transfer_function: TransferFunction,
+    /// Whether the input is full range or limited range
+    pub full_range: bool,
     pub chroma_grain: bool,
     pub random_seed: Option<u16>,
 }
@@ -159,46 +161,46 @@ pub fn generate_photon_noise_params(
     }
 }
 
-/// Generates a set of film grain parameters for a segment of video
-/// given a set of `args`.
-///
-/// # Panics
-/// - This is not yet implemented, so it will always panic
-#[must_use]
-#[inline]
-#[cfg(feature = "unstable")]
-pub fn generate_film_grain_params(
-    start_time: u64,
-    end_time: u64,
-    args: NoiseGenArgs,
-) -> GrainTableSegment {
-    todo!("SCIENCE");
-    // GrainTableSegment {
-    //     start_time,
-    //     end_time,
-    //     scaling_points_y: generate_luma_noise_points(args),
-    //     scaling_points_cb: ArrayVec::new(),
-    //     scaling_points_cr: ArrayVec::new(),
-    //     scaling_shift: 8,
-    //     ar_coeff_lag: 0,
-    //     ar_coeffs_y: ArrayVec::new(),
-    //     ar_coeffs_cb: ArrayVec::try_from([0].as_slice())
-    //         .expect("Cannot fail creation from const array"),
-    //     ar_coeffs_cr: ArrayVec::try_from([0].as_slice())
-    //         .expect("Cannot fail creation from const array"),
-    //     ar_coeff_shift: 6,
-    //     cb_mult: 0,
-    //     cb_luma_mult: 0,
-    //     cb_offset: 0,
-    //     cr_mult: 0,
-    //     cr_luma_mult: 0,
-    //     cr_offset: 0,
-    //     overlap_flag: true,
-    //     chroma_scaling_from_luma: args.chroma_grain,
-    //     grain_scale_shift: 0,
-    //     random_seed: args.random_seed.unwrap_or(DEFAULT_GRAIN_SEED),
-    // }
-}
+// TODO:
+// /// Generates a set of film grain parameters for a segment of video
+// /// given a set of `args`.
+// ///
+// /// # Panics
+// /// - This is not yet implemented, so it will always panic
+// #[must_use]
+// #[inline]
+// #[cfg(feature = "unstable")]
+// pub fn generate_film_grain_params(
+//     start_time: u64,
+//     end_time: u64,
+//     args: NoiseGenArgs,
+// ) -> GrainTableSegment {
+//     GrainTableSegment {
+//         start_time,
+//         end_time,
+//         scaling_points_y: generate_luma_noise_points(args),
+//         scaling_points_cb: ArrayVec::new(),
+//         scaling_points_cr: ArrayVec::new(),
+//         scaling_shift: 8,
+//         ar_coeff_lag: 0,
+//         ar_coeffs_y: ArrayVec::new(),
+//         ar_coeffs_cb: ArrayVec::try_from([0].as_slice())
+//             .expect("Cannot fail creation from const array"),
+//         ar_coeffs_cr: ArrayVec::try_from([0].as_slice())
+//             .expect("Cannot fail creation from const array"),
+//         ar_coeff_shift: 6,
+//         cb_mult: 0,
+//         cb_luma_mult: 0,
+//         cb_offset: 0,
+//         cr_mult: 0,
+//         cr_luma_mult: 0,
+//         cr_offset: 0,
+//         overlap_flag: true,
+//         chroma_scaling_from_luma: args.chroma_grain,
+//         grain_scale_shift: 0,
+//         random_seed: args.random_seed.unwrap_or(DEFAULT_GRAIN_SEED),
+//     }
+// }
 
 /// Write a set of generated film grain params to a table file,
 /// using the standard film grain table format supported by
@@ -376,9 +378,29 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
         * pixel_area_microns;
     let max_electrons_per_pixel = mid_tone_electrons_per_pixel / args.transfer_function.mid_tone();
 
+    let max_value = if args.full_range { 255 } else { 235 };
+    let min_value = if args.full_range { 0 } else { 16 };
+    let range = max_value - min_value;
+    const RAMP_OFFSET: usize = 3;
+    const MIN_EDGE: usize = 0;
+    const MAX_EDGE: usize = NUM_Y_POINTS - 1;
+
     let mut scaling_points = ScalingPoints::default();
     for i in 0..NUM_Y_POINTS {
-        let x = i as f32 / (NUM_Y_POINTS as f32 - 1.);
+        // Applying photon noise "as is" results in unwanted brightening of darkest and darkening of brightest luma values;
+        // clamping scaling points to a maximum of 1 at those min and max values prevents that.
+        let x = if i == MIN_EDGE {
+            0.0
+        } else if i == MAX_EDGE {
+            1.0
+        } else {
+            // (ramp_offset + (range - 2 * ramp_offset) * ((i - 1) / (film_grain->num_y_points - 3.0))) / range
+            ((range - 2 * RAMP_OFFSET) as f32).mul_add(
+                (i - 1) as f32 / (NUM_Y_POINTS - 3) as f32,
+                RAMP_OFFSET as f32,
+            ) / range as f32
+        };
+
         let linear = args.transfer_function.to_linear(x);
         let electrons_per_pixel = max_electrons_per_pixel * linear;
 
@@ -403,8 +425,13 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
             / (linear_range_end - linear_range_start);
         let encoded_noise = linear_noise * tf_slope;
 
-        let x = (255. * x).round() as u8;
-        let encoded_noise = 255_f32.min((255. * 7.88 * encoded_noise).round()) as u8;
+        // min_value as f32 + range as f32 * x
+        let x = (range as f32).mul_add(x, min_value as f32).round() as u8;
+        let mut encoded_noise =
+            (range as f32).min((range as f32 * 7.88 * encoded_noise).round()) as u8;
+        if i == MIN_EDGE || i == MAX_EDGE {
+            encoded_noise = if encoded_noise >= 1 { 1 } else { 0 };
+        }
 
         scaling_points.push([x, encoded_noise]);
     }
