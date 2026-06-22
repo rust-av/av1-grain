@@ -19,10 +19,6 @@ num-rational = { version = "0.4.1", optional = true, default-features = false }
 serde = { version = "1.0.140", optional = true, features = ["derive"] }
 v_frame = { version = "0.7", optional = true, features = ["padding_api"] }
 
-[dev-dependencies]
-quickcheck = "1.0.3"
-quickcheck_macros = "1.0.0"
-
 [features]
 default = ["create", "parse", "diff", "estimate"]
 unstable = []

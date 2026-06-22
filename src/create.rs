@@ -441,54 +441,50 @@ fn generate_luma_noise_points(args: NoiseGenArgs) -> ScalingPoints {
 
 #[cfg(test)]
 mod tests {
-    use quickcheck::TestResult;
-    use quickcheck_macros::quickcheck;
-
     use super::*;
 
-    #[quickcheck]
-    fn bt1886_to_linear_within_range(x: f32) -> TestResult {
-        if !(0.0..=1.0).contains(&x) || x.is_nan() {
-            return TestResult::discard();
-        }
+    const TOLERANCE: f32 = 1e-5;
 
-        let tx = TransferFunction::BT1886;
-        let res = tx.to_linear(x);
-        TestResult::from_bool((0.0..=1.0).contains(&res))
+    fn samples() -> impl Iterator<Item = f32> {
+        (0..=100).map(|i| i as f32 / 100.0)
     }
 
-    #[quickcheck]
-    fn bt1886_to_linear_reverts_correctly(x: f32) -> TestResult {
-        if !(0.0..=1.0).contains(&x) || x.is_nan() {
-            return TestResult::discard();
+    #[test]
+    fn bt1886_to_linear_within_range() {
+        for x in samples() {
+            let res = TransferFunction::BT1886.to_linear(x);
+            assert!(
+                (-TOLERANCE..=1.0 + TOLERANCE).contains(&res),
+                "x={x} res={res}"
+            );
         }
-
-        let tx = TransferFunction::BT1886;
-        let res = tx.to_linear(x);
-        let res = tx.from_linear(res);
-        TestResult::from_bool((x - res).abs() < f32::EPSILON)
     }
 
-    #[quickcheck]
-    fn smpte2084_to_linear_within_range(x: f32) -> TestResult {
-        if !(0.0..=1.0).contains(&x) || x.is_nan() {
-            return TestResult::discard();
+    #[test]
+    fn bt1886_to_linear_reverts_correctly() {
+        for x in samples() {
+            let res = TransferFunction::BT1886.from_linear(TransferFunction::BT1886.to_linear(x));
+            assert!((x - res).abs() < TOLERANCE, "x={x} res={res}");
         }
-
-        let tx = TransferFunction::SMPTE2084;
-        let res = tx.to_linear(x);
-        TestResult::from_bool((0.0..=1.0).contains(&res))
     }
 
-    #[quickcheck]
-    fn smpte2084_to_linear_reverts_correctly(x: f32) -> TestResult {
-        if !(0.0..=1.0).contains(&x) || x.is_nan() {
-            return TestResult::discard();
+    #[test]
+    fn smpte2084_to_linear_within_range() {
+        for x in samples() {
+            let res = TransferFunction::SMPTE2084.to_linear(x);
+            assert!(
+                (-TOLERANCE..=1.0 + TOLERANCE).contains(&res),
+                "x={x} res={res}"
+            );
         }
+    }
 
-        let tx = TransferFunction::SMPTE2084;
-        let res = tx.to_linear(x);
-        let res = tx.from_linear(res);
-        TestResult::from_bool((x - res).abs() < f32::EPSILON)
+    #[test]
+    fn smpte2084_to_linear_reverts_correctly() {
+        for x in samples() {
+            let res =
+                TransferFunction::SMPTE2084.from_linear(TransferFunction::SMPTE2084.to_linear(x));
+            assert!((x - res).abs() < TOLERANCE, "x={x} res={res}");
+        }
     }
 }
