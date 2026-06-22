@@ -1,9 +1,17 @@
 # CHANGELOG
 
-<!-- ## Upcoming (WIP)
+## Version 0.5.0
 
-- [Feature] Add a new function, `generate_film_grain_params`. This works like `generate_photon_noise_params` but generates more coarse, film-like grain.
-- [Feature] Add the `estimate` module which contains the `estimate_plane_noise` function. This takes in a series of frames and estimates the amount of noise for each of them. This feature is enabled by default. -->
+- [Breaking] Bump MSRV to Rust 1.95.
+- [Breaking] Update `v_frame` dependency to 0.7.
+- [Breaking] Update package licensing metadata to use the bundled `LICENSE` file, covering BSD-2-Clause and AOMPL-1.0 terms.
+- Remove the `nom`, `cfg-if`, `quickcheck`, and `quickcheck_macros` dependencies.
+- Remove default features from the optional `num-rational` dependency.
+- Rewrite grain table parsing without `nom`.
+- Fix noise estimation for padded `v_frame` planes.
+- Remove unused legacy FFmpeg and VapourSynth diff code.
+- Consolidate CI workflows into a single workflow and add `just precommit`.
+- Simplify tests, clippy lint configuration, and formatting configuration.
 
 ## Version 0.4.2
 

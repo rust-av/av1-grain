@@ -1,6 +1,6 @@
 [package]
 name = "av1-grain"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.95"
 # license = "BSD-2-Clause AND AOMPL-1.0" Wait for AOMPL-1.0 to be a valid SPDX expression
