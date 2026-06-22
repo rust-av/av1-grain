@@ -14,6 +14,7 @@ use v_frame::{pixel::Pixel, plane::Plane};
 /// # Panics
 /// - If called with a `bit_depth` not between `8..=16`
 #[must_use]
+#[inline]
 pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Option<f64> {
     const EDGE_THRESHOLD: u16 = 50;
 
@@ -39,14 +40,17 @@ pub fn estimate_plane_noise<T: Pixel>(plane: &Plane<T>, bit_depth: usize) -> Opt
             let mut mat = [[0i16; 3]; 3];
             for ii in -1isize..=1isize {
                 for jj in -1isize..=1isize {
-                    let idx = (i * stride + j) as isize + ii * stride as isize + jj;
-                    let pix: u16 =
-                        (*unsafe { data.get_unchecked(data_origin + idx as usize) }).into();
-                    mat[(ii + 1) as usize][(jj + 1) as usize] = if size_of::<T>() == 1 {
-                        pix as i16
-                    } else {
-                        (pix >> (bit_depth - 8)) as i16
-                    };
+                    unsafe {
+                        let idx = (i * stride + j) as isize + ii * stride as isize + jj;
+                        let pix: u16 = (*data.get_unchecked(data_origin + idx as usize)).into();
+
+                        *mat.get_unchecked_mut((ii + 1) as usize)
+                            .get_unchecked_mut((jj + 1) as usize) = if size_of::<T>() == 1 {
+                            pix as i16
+                        } else {
+                            (pix >> (bit_depth - 8)) as i16
+                        };
+                    }
                 }
             }
 
