@@ -8,16 +8,6 @@
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
 use arrayvec::ArrayVec;
-use nom::{
-    AsChar, Compare, Err as NomErr, IResult, Input, Parser,
-    branch::alt,
-    bytes::complete::tag,
-    character::complete::{char, digit1, line_ending, multispace0, multispace1, space0, space1},
-    combinator::{eof, map_res, opt, recognize},
-    error::{Error as NomError, ErrorKind, FromExternalError, ParseError},
-    multi::{many1, separated_list0, separated_list1},
-    sequence::{delimited, preceded},
-};
 
 use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y_POINTS};
 
@@ -49,47 +39,136 @@ use crate::{GrainTableSegment, NUM_UV_COEFFS, NUM_UV_POINTS, NUM_Y_COEFFS, NUM_Y
 /// - If the file does not contain a properly formatted film grain table
 #[inline]
 pub fn parse_grain_table(input: &str) -> anyhow::Result<Vec<GrainTableSegment>> {
-    let (input, _) = grain_table_header(input).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let (_, segments) = many1(grain_table_segment)
-        .parse(input)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    Ok(segments.into_iter().flatten().collect())
+    let lines = non_empty_lines(input);
+    let Some((header, body)) = lines.split_first() else {
+        anyhow::bail!("Expected filmgrn1 header");
+    };
+
+    let (header_tag, header_values) = header.split()?;
+    anyhow::ensure!(
+        header_tag == "filmgrn1" && header_values.is_empty(),
+        "line {}: expected filmgrn1 header",
+        header.line_no
+    );
+
+    parse_segments(body)
 }
 
-fn grain_table_header(input: &str) -> IResult<&str, ()> {
-    let (input, _) = delimited(multispace0, tag("filmgrn1"), line_ending).parse(input)?;
-    Ok((input, ()))
+#[derive(Debug)]
+struct LineFields<'a> {
+    line_no: usize,
+    fields: Vec<&'a str>,
 }
 
-fn line<I, O, E: ParseError<I>, F>(parser: F) -> impl Parser<I, Output = O, Error = E>
-where
-    I: Input + Clone + Compare<&'static str>,
-    <I as Input>::Item: AsChar + Clone,
-    F: Parser<I, Output = O, Error = E>,
-{
-    delimited(multispace0, parser, alt((line_ending, eof)))
-}
-
-fn grain_table_segment(input: &str) -> IResult<&str, Option<GrainTableSegment>> {
-    let (input, e_params) = e_params(input)?;
-    if !e_params.apply {
-        // I'm not sure *why* there's even an option to generate a film grain config
-        // that doesn't apply film grain. But, well, I didn't make this format.
-        return Ok((input, None));
+impl<'a> LineFields<'a> {
+    fn split(&self) -> anyhow::Result<(&'a str, &[&'a str])> {
+        self.fields
+            .split_first()
+            .map(|(tag, values)| (*tag, values))
+            .ok_or_else(|| anyhow::anyhow!("line {}: expected a non-empty line", self.line_no))
     }
+}
 
-    let (input, p_params) = p_params(input)?;
-    let (input, s_y_params) = s_y_params(input)?;
-    let (input, s_cb_params) = s_cb_params(input)?;
-    let (input, s_cr_params) = s_cr_params(input)?;
-    let coeff_count = (2 * p_params.ar_coeff_lag * (p_params.ar_coeff_lag + 1)) as usize;
-    let (input, c_y_params) = c_y_params(input, coeff_count)?;
-    let (input, c_cb_params) = c_cb_params(input, coeff_count)?;
-    let (input, c_cr_params) = c_cr_params(input, coeff_count)?;
+fn non_empty_lines(input: &str) -> Vec<LineFields<'_>> {
+    input
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            (!fields.is_empty()).then_some(LineFields {
+                line_no: index + 1,
+                fields,
+            })
+        })
+        .collect()
+}
 
-    Ok((
-        input,
-        Some(GrainTableSegment {
+fn expect_tag<'a>(line: &'a LineFields<'_>, tag: &str) -> anyhow::Result<&'a [&'a str]> {
+    let (actual, values) = line.split()?;
+    anyhow::ensure!(
+        actual == tag,
+        "line {}: expected {tag} line, got {actual}",
+        line.line_no
+    );
+    Ok(values)
+}
+
+fn parse_values<T>(line: &LineFields<'_>, values: &[&str], label: &str) -> anyhow::Result<Vec<T>>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    values
+        .iter()
+        .map(|value| {
+            value.parse::<T>().map_err(|error| {
+                anyhow::anyhow!(
+                    "line {}: failed to parse {label} value `{value}`: {error}",
+                    line.line_no
+                )
+            })
+        })
+        .collect()
+}
+
+fn parse_segments(lines: &[LineFields<'_>]) -> anyhow::Result<Vec<GrainTableSegment>> {
+    let mut index = 0;
+    let mut saw_segment = false;
+    let mut segments = Vec::new();
+
+    while let Some(line) = lines.get(index) {
+        let (tag, _) = line.split()?;
+        if tag != "E" {
+            if saw_segment {
+                break;
+            }
+            anyhow::bail!("line {}: expected E line, got {tag}", line.line_no);
+        }
+
+        saw_segment = true;
+        let e_params = e_params(line)?;
+        index += 1;
+
+        if !e_params.apply {
+            continue;
+        }
+
+        let p_params = p_params(required_line(lines, index, "p")?)?;
+        index += 1;
+        let s_y_params =
+            s_params::<NUM_Y_POINTS>(required_line(lines, index, "sY")?, "sY", "Y-plane")?;
+        index += 1;
+        let s_cb_params =
+            s_params::<NUM_UV_POINTS>(required_line(lines, index, "sCb")?, "sCb", "Cb-plane")?;
+        index += 1;
+        let s_cr_params =
+            s_params::<NUM_UV_POINTS>(required_line(lines, index, "sCr")?, "sCr", "Cr-plane")?;
+        index += 1;
+
+        let coeff_count = (2 * p_params.ar_coeff_lag * (p_params.ar_coeff_lag + 1)) as usize;
+        let c_y_params = c_params::<NUM_Y_COEFFS>(
+            required_line(lines, index, "cY")?,
+            "cY",
+            "Y-plane",
+            coeff_count,
+        )?;
+        index += 1;
+        let c_cb_params = c_params::<NUM_UV_COEFFS>(
+            required_line(lines, index, "cCb")?,
+            "cCb",
+            "Cb-plane",
+            coeff_count + 1,
+        )?;
+        index += 1;
+        let c_cr_params = c_params::<NUM_UV_COEFFS>(
+            required_line(lines, index, "cCr")?,
+            "cCr",
+            "Cr-plane",
+            coeff_count + 1,
+        )?;
+        index += 1;
+
+        segments.push(GrainTableSegment {
             start_time: e_params.start,
             end_time: e_params.end,
             scaling_points_y: s_y_params,
@@ -111,8 +190,28 @@ fn grain_table_segment(input: &str) -> IResult<&str, Option<GrainTableSegment>> 
             chroma_scaling_from_luma: p_params.chroma_scaling_from_luma,
             grain_scale_shift: p_params.grain_scale_shift,
             random_seed: e_params.seed,
-        }),
-    ))
+        });
+    }
+
+    anyhow::ensure!(saw_segment, "Expected at least one grain table segment");
+    Ok(segments)
+}
+
+fn required_line<'a, 'input>(
+    lines: &'a [LineFields<'input>],
+    index: usize,
+    expected_tag: &str,
+) -> anyhow::Result<&'a LineFields<'input>> {
+    let Some(line) = lines.get(index) else {
+        anyhow::bail!("Expected {expected_tag} line, got end of input");
+    };
+    let (actual_tag, _) = line.split()?;
+    anyhow::ensure!(
+        actual_tag == expected_tag,
+        "line {}: expected {expected_tag} line, got {actual_tag}",
+        line.line_no
+    );
+    Ok(line)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -123,69 +222,47 @@ struct EParams {
     pub seed: u16,
 }
 
-fn e_params(input: &str) -> IResult<&str, EParams> {
-    let (input, params) = map_res(
-        line(preceded(
-            tag("E"),
-            preceded(space1, separated_list1(space1, digit1)),
-        )),
-        |items: Vec<&str>| {
-            if items.len() != 5 {
-                return Err(NomErr::<NomError<&str>>::Failure(
-                    NomError::from_external_error(
-                        input,
-                        ErrorKind::Verify,
-                        "Expected 5 values on E line",
-                    ),
-                ));
-            }
-            let parsed = EParams {
-                start: unsafe { items.get_unchecked(0) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse start_time",
-                    ))
-                })?,
-                end: unsafe { items.get_unchecked(1) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse end_time",
-                    ))
-                })?,
-                apply: unsafe { items.get_unchecked(2) }
-                    .parse::<u8>()
-                    .map_err(|_e| {
-                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                            input,
-                            ErrorKind::Digit,
-                            "Failed to parse apply_grain",
-                        ))
-                    })?
-                    > 0,
-                seed: unsafe { items.get_unchecked(3) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse random_seed",
-                    ))
-                })?,
-            };
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
+fn e_params(line: &LineFields<'_>) -> anyhow::Result<EParams> {
+    let values = expect_tag(line, "E")?;
+    let [start, end, apply, seed, _dynamic_grain] = values else {
+        anyhow::bail!(
+            "line {}: expected 5 values on E line, got {}",
+            line.line_no,
+            values.len()
+        );
+    };
 
-    if params.end < params.start {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            "Start time must be before end time",
-        )));
-    }
+    let start = start.parse::<u64>().map_err(|error| {
+        anyhow::anyhow!("line {}: failed to parse start_time: {error}", line.line_no)
+    })?;
+    let end = end.parse::<u64>().map_err(|error| {
+        anyhow::anyhow!("line {}: failed to parse end_time: {error}", line.line_no)
+    })?;
+    let apply = apply.parse::<u8>().map_err(|error| {
+        anyhow::anyhow!(
+            "line {}: failed to parse apply_grain: {error}",
+            line.line_no
+        )
+    })? > 0;
+    let seed = seed.parse::<u16>().map_err(|error| {
+        anyhow::anyhow!(
+            "line {}: failed to parse random_seed: {error}",
+            line.line_no
+        )
+    })?;
 
-    Ok((input, params))
+    anyhow::ensure!(
+        end >= start,
+        "line {}: start time must be before end time",
+        line.line_no
+    );
+
+    Ok(EParams {
+        start,
+        end,
+        apply,
+        seed,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -205,403 +282,173 @@ struct PParams {
 }
 
 #[allow(clippy::too_many_lines)]
-fn p_params(input: &str) -> IResult<&str, PParams> {
-    let (input, params) = map_res(
-        line(preceded(
-            tag("p"),
-            preceded(space1, separated_list1(space1, digit1)),
-        )),
-        |items: Vec<&str>| {
-            if items.len() != 12 {
-                return Err(NomErr::<NomError<&str>>::Failure(
-                    NomError::from_external_error(
-                        input,
-                        ErrorKind::Verify,
-                        "Expected 12 values on p line",
-                    ),
-                ));
-            }
+fn p_params(line: &LineFields<'_>) -> anyhow::Result<PParams> {
+    let values = expect_tag(line, "p")?;
+    let [
+        ar_coeff_lag,
+        ar_coeff_shift,
+        grain_scale_shift,
+        scaling_shift,
+        chroma_scaling_from_luma,
+        overlap_flag,
+        cb_mult,
+        cb_luma_mult,
+        cb_offset,
+        cr_mult,
+        cr_luma_mult,
+        cr_offset,
+    ] = values
+    else {
+        anyhow::bail!(
+            "line {}: expected 12 values on p line, got {}",
+            line.line_no,
+            values.len()
+        );
+    };
 
-            let parsed = PParams {
-                ar_coeff_lag: unsafe { items.get_unchecked(0) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse ar_coeff_lag",
-                    ))
-                })?,
-                ar_coeff_shift: unsafe { items.get_unchecked(1) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse ar_coeff_shift",
-                    ))
-                })?,
-                grain_scale_shift: unsafe { items.get_unchecked(2) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse grain_scale_shift",
-                    ))
-                })?,
-                scaling_shift: unsafe { items.get_unchecked(3) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse scaling_shift",
-                    ))
-                })?,
-                chroma_scaling_from_luma: unsafe { items.get_unchecked(4) }.parse::<u8>().map_err(
-                    |_e| {
-                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                            input,
-                            ErrorKind::Digit,
-                            "Failed to parse chroma_scaling_from_luma",
-                        ))
-                    },
-                )? > 0,
-                overlap_flag: unsafe { items.get_unchecked(5) }
-                    .parse::<u8>()
-                    .map_err(|_e| {
-                        NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                            input,
-                            ErrorKind::Digit,
-                            "Failed to parse overlap_flag",
-                        ))
-                    })?
-                    > 0,
-                cb_mult: unsafe { items.get_unchecked(6) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse cb_mult",
-                    ))
-                })?,
-                cb_luma_mult: unsafe { items.get_unchecked(7) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse cb_luma_mult",
-                    ))
-                })?,
-                cb_offset: unsafe { items.get_unchecked(8) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse cb_offset",
-                    ))
-                })?,
-                cr_mult: unsafe { items.get_unchecked(9) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse cr_mult",
-                    ))
-                })?,
-                cr_luma_mult: unsafe { items.get_unchecked(10) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse cr_luma_mult",
-                    ))
-                })?,
-                cr_offset: unsafe { items.get_unchecked(11) }.parse().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse cr_offset",
-                    ))
-                })?,
-            };
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
+    let params = PParams {
+        ar_coeff_lag: ar_coeff_lag.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse ar_coeff_lag: {error}",
+                line.line_no
+            )
+        })?,
+        ar_coeff_shift: ar_coeff_shift.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse ar_coeff_shift: {error}",
+                line.line_no
+            )
+        })?,
+        grain_scale_shift: grain_scale_shift.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse grain_scale_shift: {error}",
+                line.line_no
+            )
+        })?,
+        scaling_shift: scaling_shift.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse scaling_shift: {error}",
+                line.line_no
+            )
+        })?,
+        chroma_scaling_from_luma: chroma_scaling_from_luma.parse::<u8>().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse chroma_scaling_from_luma: {error}",
+                line.line_no
+            )
+        })? > 0,
+        overlap_flag: overlap_flag.parse::<u8>().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse overlap_flag: {error}",
+                line.line_no
+            )
+        })? > 0,
+        cb_mult: cb_mult.parse().map_err(|error| {
+            anyhow::anyhow!("line {}: failed to parse cb_mult: {error}", line.line_no)
+        })?,
+        cb_luma_mult: cb_luma_mult.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse cb_luma_mult: {error}",
+                line.line_no
+            )
+        })?,
+        cb_offset: cb_offset.parse().map_err(|error| {
+            anyhow::anyhow!("line {}: failed to parse cb_offset: {error}", line.line_no)
+        })?,
+        cr_mult: cr_mult.parse().map_err(|error| {
+            anyhow::anyhow!("line {}: failed to parse cr_mult: {error}", line.line_no)
+        })?,
+        cr_luma_mult: cr_luma_mult.parse().map_err(|error| {
+            anyhow::anyhow!(
+                "line {}: failed to parse cr_luma_mult: {error}",
+                line.line_no
+            )
+        })?,
+        cr_offset: cr_offset.parse().map_err(|error| {
+            anyhow::anyhow!("line {}: failed to parse cr_offset: {error}", line.line_no)
+        })?,
+    };
 
-    if params.scaling_shift < 8 || params.scaling_shift > 11 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            "scaling_shift must be between 8 and 11",
-        )));
-    }
-    if params.ar_coeff_lag > 3 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            "ar_coeff_lag must be between 0 and 3",
-        )));
-    }
-    if params.ar_coeff_shift < 6 || params.ar_coeff_shift > 9 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            "ar_coeff_shift must be between 6 and 9",
-        )));
-    }
+    anyhow::ensure!(
+        (8..=11).contains(&params.scaling_shift),
+        "line {}: scaling_shift must be between 8 and 11",
+        line.line_no
+    );
+    anyhow::ensure!(
+        params.ar_coeff_lag <= 3,
+        "line {}: ar_coeff_lag must be between 0 and 3",
+        line.line_no
+    );
+    anyhow::ensure!(
+        (6..=9).contains(&params.ar_coeff_shift),
+        "line {}: ar_coeff_shift must be between 6 and 9",
+        line.line_no
+    );
 
-    Ok((input, params))
+    Ok(params)
 }
 
-fn s_y_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_Y_POINTS>> {
-    let (input, values) = map_res(
-        line(preceded(
-            tag("sY"),
-            preceded(space1, separated_list1(space1, digit1)),
-        )),
-        |items: Vec<&str>| {
-            let mut parsed = Vec::with_capacity(items.len());
-            for item in items {
-                parsed.push(item.parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse Y-plane points",
-                    ))
-                })?);
-            }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
+fn s_params<const N: usize>(
+    line: &LineFields<'_>,
+    tag: &str,
+    label: &str,
+) -> anyhow::Result<ArrayVec<[u8; 2], N>> {
+    let values = expect_tag(line, tag)?;
+    let parsed = parse_values::<u8>(line, values, label)?;
+    let Some((count, points)) = parsed.split_first() else {
+        anyhow::bail!("line {}: expected {label} point count", line.line_no);
+    };
 
-    let len = *unsafe { values.get_unchecked(0) } as usize;
-    if values.len() != len * 2 + 1 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            format!(
-                "Expected {} Y-plane points, got {}",
-                len * 2,
-                values.len() - 1
-            ),
-        )));
+    let count = *count as usize;
+    let expected_values = count * 2;
+    anyhow::ensure!(
+        points.len() == expected_values,
+        "line {}: expected {expected_values} {label} point values, got {}",
+        line.line_no,
+        points.len()
+    );
+    anyhow::ensure!(
+        count <= N,
+        "line {}: expected at most {N} {label} points, got {count}",
+        line.line_no
+    );
+
+    let mut output = ArrayVec::new();
+    for point in points.chunks_exact(2) {
+        let [x, y] = point else {
+            unreachable!("chunks_exact(2) only yields two-value chunks");
+        };
+        output.push([*x, *y]);
     }
-
-    Ok((
-        input,
-        unsafe { values.get_unchecked(1..) }
-            .chunks_exact(2)
-            .map(|chunk| {
-                // we know the chunk is exactly length 2,
-                // but `chunks_exact` doesn't specify that in the type definition
-                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
-                    chunk.get_unchecked(1)
-                }]
-            })
-            .collect(),
-    ))
+    Ok(output)
 }
 
-fn s_cb_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
-    let (input, values) = map_res(
-        line(preceded(
-            tag("sCb"),
-            preceded(space1, separated_list1(space1, digit1)),
-        )),
-        |items: Vec<&str>| {
-            let mut parsed = Vec::with_capacity(items.len());
-            for item in items {
-                parsed.push(item.parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse Cb-plane points",
-                    ))
-                })?);
-            }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
+fn c_params<const N: usize>(
+    line: &LineFields<'_>,
+    tag: &str,
+    label: &str,
+    expected_count: usize,
+) -> anyhow::Result<ArrayVec<i8, N>> {
+    let values = expect_tag(line, tag)?;
+    let parsed = parse_values::<i8>(line, values, label)?;
+    anyhow::ensure!(
+        parsed.len() == expected_count,
+        "line {}: expected {expected_count} {label} coeffs, got {}",
+        line.line_no,
+        parsed.len()
+    );
+    anyhow::ensure!(
+        parsed.len() <= N,
+        "line {}: expected at most {N} {label} coeffs, got {}",
+        line.line_no,
+        parsed.len()
+    );
 
-    let len = *unsafe { values.get_unchecked(0) } as usize;
-    if values.len() != len * 2 + 1 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            format!(
-                "Expected {} Cb-plane points, got {}",
-                len * 2,
-                values.len() - 1
-            ),
-        )));
+    let mut output = ArrayVec::new();
+    for value in parsed {
+        output.push(value);
     }
-
-    Ok((
-        input,
-        unsafe { values.get_unchecked(1..) }
-            .chunks_exact(2)
-            .map(|chunk| {
-                // we know the chunk is exactly length 2,
-                // but `chunks_exact` doesn't specify that in the type definition
-                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
-                    chunk.get_unchecked(1)
-                }]
-            })
-            .collect(),
-    ))
-}
-
-fn s_cr_params(input: &str) -> IResult<&str, ArrayVec<[u8; 2], NUM_UV_POINTS>> {
-    let (input, values) = map_res(
-        line(preceded(
-            tag("sCr"),
-            preceded(space1, separated_list1(space1, digit1)),
-        )),
-        |items: Vec<&str>| {
-            let mut parsed = Vec::with_capacity(items.len());
-            for item in items {
-                parsed.push(item.parse::<u8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse Cr-plane points",
-                    ))
-                })?);
-            }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
-
-    let len = *unsafe { values.get_unchecked(0) } as usize;
-    if values.len() != len * 2 + 1 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            format!(
-                "Expected {} Cr-plane points, got {}",
-                len * 2,
-                values.len() - 1
-            ),
-        )));
-    }
-
-    Ok((
-        input,
-        unsafe { values.get_unchecked(1..) }
-            .chunks_exact(2)
-            .map(|chunk| {
-                // we know the chunk is exactly length 2,
-                // but `chunks_exact` doesn't specify that in the type definition
-                [*unsafe { chunk.get_unchecked(0) }, *unsafe {
-                    chunk.get_unchecked(1)
-                }]
-            })
-            .collect(),
-    ))
-}
-
-fn integer(input: &str) -> IResult<&str, &str> {
-    recognize(preceded(opt(char('-')), digit1)).parse(input)
-}
-
-fn c_y_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_Y_COEFFS>> {
-    let (input, values) = map_res(
-        line(preceded(
-            tag("cY"),
-            preceded(space0, separated_list0(multispace1, integer)),
-        )),
-        |items: Vec<&str>| {
-            let mut parsed = Vec::with_capacity(items.len());
-            for item in items {
-                parsed.push(item.parse::<i8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse Y-plane coeffs",
-                    ))
-                })?);
-            }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
-
-    if values.len() != count {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            format!("Expected {} Y-plane coeffs, got {}", count, values.len()),
-        )));
-    }
-
-    Ok((input, values.into_iter().collect()))
-}
-
-fn c_cb_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_COEFFS>> {
-    let (input, values) = map_res(
-        line(preceded(
-            tag("cCb"),
-            preceded(space1, separated_list1(multispace1, integer)),
-        )),
-        |items: Vec<&str>| {
-            let mut parsed = Vec::with_capacity(items.len());
-            for item in items {
-                parsed.push(item.parse::<i8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse Cb-plane coeffs",
-                    ))
-                })?);
-            }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
-
-    if values.len() != count + 1 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            format!(
-                "Expected {} Cb-plane coeffs, got {}",
-                count + 1,
-                values.len()
-            ),
-        )));
-    }
-
-    Ok((input, values.into_iter().collect()))
-}
-
-fn c_cr_params(input: &str, count: usize) -> IResult<&str, ArrayVec<i8, NUM_UV_COEFFS>> {
-    let (input, values) = map_res(
-        line(preceded(
-            tag("cCr"),
-            preceded(space1, separated_list1(multispace1, integer)),
-        )),
-        |items: Vec<&str>| {
-            let mut parsed = Vec::with_capacity(items.len());
-            for item in items {
-                parsed.push(item.parse::<i8>().map_err(|_e| {
-                    NomErr::<NomError<&str>>::Failure(NomError::from_external_error(
-                        input,
-                        ErrorKind::Digit,
-                        "Failed to parse Cr-plane coeffs",
-                    ))
-                })?);
-            }
-            Ok::<_, NomErr<NomError<&str>>>(parsed)
-        },
-    )
-    .parse(input)?;
-
-    if values.len() != count + 1 {
-        return Err(NomErr::Failure(NomError::from_external_error(
-            input,
-            ErrorKind::Verify,
-            format!(
-                "Expected {} Cr-plane coeffs, got {}",
-                count + 1,
-                values.len()
-            ),
-        )));
-    }
-
-    Ok((input, values.into_iter().collect()))
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -819,5 +666,41 @@ E 20020000 9223372036854775807 1 0 1
 	cCr 1 0 -3 2 -3 -1 0 1 -1 -4 5 -2 -1 -1 -5 -6 3 20 10 4 -2 0 9 23 -1"#;
         let output = parse_grain_table(input);
         assert!(output.is_ok());
+    }
+
+    #[test]
+    fn parse_rejects_missing_required_line() {
+        let input = r#"filmgrn1
+E 0 100 1 7391 1
+  p 0 6 0 8 0 1 0 0 0 0 0 0
+  sY 0
+  sCb 0
+  sCr 0
+  cY
+  cCb 0
+"#;
+
+        let err = parse_grain_table(input).expect_err("missing cCr line should fail");
+        assert!(err.to_string().contains("Expected cCr line"));
+    }
+
+    #[test]
+    fn parse_rejects_too_many_luma_scaling_points() {
+        let input = r#"filmgrn1
+E 0 100 1 7391 1
+  p 0 6 0 8 0 1 0 0 0 0 0 0
+  sY 15 0 0 1 0 2 0 3 0 4 0 5 0 6 0 7 0 8 0 9 0 10 0 11 0 12 0 13 0 14 0
+  sCb 0
+  sCr 0
+  cY
+  cCb 0
+  cCr 0
+"#;
+
+        let err = parse_grain_table(input).expect_err("too many Y points should fail");
+        assert!(
+            err.to_string()
+                .contains("expected at most 14 Y-plane points")
+        );
     }
 }
